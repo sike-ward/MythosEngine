@@ -39,7 +39,9 @@ from MythosEngine.models.session import Session as SessionModel
 from MythosEngine.models.sound import Sound
 from MythosEngine.models.user import User
 from MythosEngine.models.vault import Vault
+from MythosEngine.search.vector_index import VectorIndexConfig, VectorIndexLocation, VectorIndexManager
 from MythosEngine.storage.storage_base import StorageBackend
+from MythosEngine.sync.conflict_resolver import DEFAULT_CONFLICT_STRATEGY, ConflictRecord, ConflictResolver
 
 # ============================================================================
 # SQLAlchemy ORM Models
@@ -210,16 +212,10 @@ class SQLiteBackend(StorageBackend):
         from MythosEngine.ai.cost_tracker import CostTracker
         self.cost_tracker = CostTracker(self.engine)
 
-        # Future: wire in VectorIndexManager here once sentence_transformers is
-        # confirmed available in the deployment environment.
-        #
-        #   from MythosEngine.search.vector_index import (
-        #       VectorIndexConfig, VectorIndexLocation, VectorIndexManager,
-        #   )
-        #   _vec_cfg = VectorIndexConfig(
-        #       location=VectorIndexLocation.IN_MEMORY, enabled=False
-        #   )
-        #   self.vector_index = VectorIndexManager(_vec_cfg)
+        # Vector index — in-memory semantic search; builds lazily on first write.
+        self.vector_index = VectorIndexManager(
+            VectorIndexConfig(location=VectorIndexLocation.IN_MEMORY, enabled=True)
+        )
 
     def _session(self) -> Session:
         """Get a new database session."""
@@ -238,6 +234,20 @@ class SQLiteBackend(StorageBackend):
     def absolute_path(self, rel: str) -> str:
         """Public interface: resolve a vault-relative path to an absolute string."""
         return str(self._abs(rel))
+
+    def _get_all_notes_for_index(self) -> list:
+        """Return all vault notes as dicts for vector index building."""
+        notes = []
+        for p in self.vault_path.rglob("*.md"):
+            if p.name.startswith("."):
+                continue
+            try:
+                content = p.read_text(encoding="utf-8", errors="replace")
+                rel = str(p.relative_to(self.vault_path))
+                notes.append({"note_path": rel, "title": p.stem, "content": content})
+            except Exception:
+                continue
+        return notes
 
     # ========================================================================
     # Users
@@ -481,6 +491,8 @@ class SQLiteBackend(StorageBackend):
         with self._session() as session:
             session.query(NoteRecord).filter(NoteRecord.id == note_id).delete()
             session.commit()
+        self.vector_index.clear()
+        self.vector_index.build_index(self._get_all_notes_for_index())
 
     def list_notes(self, folder: str = "") -> List[str]:
         """List note file paths the current user can access.
@@ -515,17 +527,37 @@ class SQLiteBackend(StorageBackend):
         """Read note content from markdown file."""
         return self._abs(path).read_text(encoding="utf-8")
 
-    def write_note(self, path: str, content: str) -> None:
-        """Write note content to markdown file."""
+    def write_note(self, path: str, content: str, updated_at: Optional[datetime] = None) -> None:
+        """Write note content to markdown file, resolving sync conflicts when detected."""
         abs_path = self._abs(path)
         abs_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Conflict detection: if the file on disk is newer than the incoming version,
+        # the caller is writing a stale copy — apply the configured resolution strategy.
+        if abs_path.is_file() and updated_at is not None:
+            existing_content = abs_path.read_text(encoding="utf-8")
+            if existing_content != content:
+                existing_mtime = datetime.fromtimestamp(abs_path.stat().st_mtime)
+                if existing_mtime > updated_at:
+                    record = ConflictRecord(
+                        note_path=path,
+                        local_version=existing_content,
+                        remote_version=content,
+                        local_updated_at=existing_mtime,
+                        remote_updated_at=updated_at,
+                    )
+                    content = ConflictResolver().resolve(record, DEFAULT_CONFLICT_STRATEGY)
+
         abs_path.write_text(content, encoding="utf-8")
+        self.vector_index.build_index(self._get_all_notes_for_index())
 
     def delete_note(self, path: str) -> None:
-        """Delete a note markdown file."""
+        """Delete a note markdown file and rebuild the vector index."""
         abs_path = self._abs(path)
         if abs_path.is_file():
             abs_path.unlink()
+        self.vector_index.clear()
+        self.vector_index.build_index(self._get_all_notes_for_index())
 
     def note_exists(self, path: str) -> bool:
         """Check if a note file exists."""
@@ -768,17 +800,49 @@ class SQLiteBackend(StorageBackend):
         """Check if a note or folder exists."""
         return self._abs(rel_path).exists()
 
-    def search_notes(self, query: str, vault_id: str = "", top_k: int = 100) -> List[Note]:
+    def search_notes(
+        self,
+        query: str,
+        vault_id: str = "",
+        top_k: int = 100,
+        search_type: str = "fulltext",
+    ) -> List[Note]:
         """
-        Full-text search across all markdown notes.
+        Search across all markdown notes.
 
-        Case-insensitive substring match on title and content.
-        vault_id is accepted for interface compatibility but is ignored
-        (all notes in vault_path are searched).
+        Parameters
+        ----------
+        search_type : str
+            ``"semantic"`` uses the vector index (sentence_transformers cosine
+            similarity) when available, falling back to fulltext automatically.
+            ``"fulltext"`` (default) does case-insensitive substring matching on
+            title and content.
         """
+        if search_type == "semantic" and self.vector_index.is_available():
+            note_paths = self.vector_index.search(query, top_k=top_k)
+            results: List[Note] = []
+            for rel in note_paths:
+                p = self.vault_path / rel
+                if not p.is_file():
+                    continue
+                try:
+                    content = p.read_text(encoding="utf-8", errors="replace")
+                    results.append(
+                        Note(
+                            id=rel,
+                            owner_id="system",
+                            vault_id=vault_id or str(self.vault_path),
+                            title=p.stem,
+                            content=content,
+                        )
+                    )
+                except Exception:
+                    continue
+            return results
+
+        # Fulltext: case-insensitive substring match on title and content.
         query_lower = query.lower()
-        results: List[Note] = []
-
+        results = []
         for p in self.vault_path.rglob("*.md"):
             if p.name.startswith("."):
                 continue
