@@ -206,6 +206,21 @@ class SQLiteBackend(StorageBackend):
         # Create all tables on first run
         Base.metadata.create_all(self.engine)
 
+        # AI cost tracking — records token usage per user/vault/operation.
+        from MythosEngine.ai.cost_tracker import CostTracker
+        self.cost_tracker = CostTracker(self.engine)
+
+        # Future: wire in VectorIndexManager here once sentence_transformers is
+        # confirmed available in the deployment environment.
+        #
+        #   from MythosEngine.search.vector_index import (
+        #       VectorIndexConfig, VectorIndexLocation, VectorIndexManager,
+        #   )
+        #   _vec_cfg = VectorIndexConfig(
+        #       location=VectorIndexLocation.IN_MEMORY, enabled=False
+        #   )
+        #   self.vector_index = VectorIndexManager(_vec_cfg)
+
     def _session(self) -> Session:
         """Get a new database session."""
         return Session(self.engine)

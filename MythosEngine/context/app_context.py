@@ -163,6 +163,11 @@ class AppContext:
     # AI helpers
     # ------------------------------------------------------------------
 
+    @property
+    def cost_tracker(self):
+        """Return the CostTracker from the SQLite backend, or None if unavailable."""
+        return getattr(self.storage, "cost_tracker", None)
+
     def has_ai(self) -> bool:
         """Return True if an AI engine has been wired up."""
         return self.ai is not None
