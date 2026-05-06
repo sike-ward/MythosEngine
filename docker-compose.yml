@@ -1,0 +1,61 @@
+# docker-compose.yml — MythosEngine multi-user deployment
+#
+# Quick start
+# -----------
+#   cp .env.example .env          # fill in OPENAI_API_KEY at minimum
+#   docker compose up --build -d
+#   docker compose logs -f
+#
+# Data is stored under ./docker-data/ on the host so it survives
+# container recreation.  Back up that directory to preserve your vaults.
+#
+# To apply schema migrations manually:
+#   docker compose exec api alembic upgrade head
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mythosengine:latest
+    container_name: mythosengine_api
+    restart: unless-stopped
+
+    # ── Ports ─────────────────────────────────────────────────────────────────
+    ports:
+      - "${API_PORT:-8741}:8741"
+
+    # ── Environment ───────────────────────────────────────────────────────────
+    environment:
+      APP_ENV: "${APP_ENV:-production}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      VAULT_PATH: /data/vault
+      DATABASE_URL: "sqlite:////data/mythos_engine.db"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      WORKERS: "${WORKERS:-1}"
+      # Config-level overrides (optional)
+      COMPLETION_MODEL: "${COMPLETION_MODEL:-gpt-4o}"
+      EMBEDDING_MODEL: "${EMBEDDING_MODEL:-text-embedding-3-small}"
+
+    # ── Volumes ───────────────────────────────────────────────────────────────
+    # All persistent data lives under ./docker-data/ on the host.
+    volumes:
+      - ./docker-data/vault:/data/vault          # markdown notes & attachments
+      - ./docker-data/db:/data                   # SQLite database file
+      - ./docker-data/logs:/app/logs             # application logs
+
+    # ── Health check ──────────────────────────────────────────────────────────
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8741/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+# ── Named volumes (optional — uncomment to use Docker-managed volumes instead
+#    of bind mounts above; bind mounts are easier to inspect/back up)
+# volumes:
+#   vault_data:
+#   db_data:
+#   log_data:
