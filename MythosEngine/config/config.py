@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import traceback
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
@@ -148,8 +147,11 @@ class Config:
 
 
 def log_exception(e: Exception, context: str = ""):
-    err_msg = f"Unhandled exception: {e}\n{traceback.format_exc()}"
-    print(f"[ERROR] {context} - {err_msg}")
+    logger = logging.getLogger("MythosLogger")
+    if context:
+        logger.exception("%s — unhandled exception: %s", context, e)
+    else:
+        logger.exception("Unhandled exception: %s", e)
 
 
 def load_note_templates():
