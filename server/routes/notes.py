@@ -1,83 +1,38 @@
 """
-Note and folder endpoints.
+Notes & Folders routes for MythosEngine FastAPI server.
 
-GET /notes — list notes (uses search_notes under the hood)
-GET /notes/search?q= — search notes
-GET /notes/{id} — read note by id
-POST /notes — create note
-PUT /notes/{id} — update note (title, content, tags, meta, folder_id, permissions, links)
-DELETE /notes/{id} — delete note
-POST /notes/move — move note to different folder
-
-POST /notes/{id}/tags — add a tag
-DELETE /notes/{id}/tags/{tag} — remove a tag
-PUT /notes/{id}/meta — update metadata dict
-
-GET /notes/folders — list folders
-POST /notes/folders — create folder
-PUT /notes/folders/{id} — rename/update folder
-DELETE /notes/folders/{id} — delete folder
-
-NOTE: storage.list_notes() returns List[str] (file paths), NOT Note objects.
-We use search_notes("") or get_note_by_id() for Note objects, and the
-NoteManager / FolderManager for all CRUD.
+Endpoints
+---------
+GET    /notes                     — list notes (optional folder/tag filter)
+GET    /notes/search              — full-text search
+GET    /notes/folders             — list folders
+POST   /notes/folders             — create folder
+PUT    /notes/folders/{folder_id} — rename/update folder
+DELETE /notes/folders/{folder_id} — delete folder
+POST   /notes                     — create note
+GET    /notes/{note_id}           — get note + content
+PUT    /notes/{note_id}           — update note content/metadata
+DELETE /notes/{note_id}           — delete note
+POST   /notes/move                — move note to another folder
+POST   /notes/{note_id}/tags      — add tag
+DELETE /notes/{note_id}/tags/{tag} — remove tag
+PUT    /notes/{note_id}/meta      — update arbitrary meta dict
 """
 
-from typing import Optional, List, Dict
-from datetime import datetime
+from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from MythosEngine.context.app_context import AppContext
+from MythosEngine.models.note import Note
 from MythosEngine.models.user import User
+from server.dependencies import get_ctx, get_current_user
 
-from server.deps import get_ctx, get_current_user
-
-
-router = APIRouter()
-
-
-# ============================================================================
-# Request/Response models
-# ============================================================================
-
-
-class NoteListItem(BaseModel):
-    """Item in note list response — includes enough for tree + filter display."""
-    id: str
-    title: str
-    folder_id: Optional[str] = None
-    tags: List[str] = []
-    group_id: Optional[str] = None
-    owner_id: str = ""
-    is_deleted: bool = False
-    created_at: datetime
-    last_modified: datetime
-
-
-class NoteDetail(BaseModel):
-    """Full note response — every field the Note model exposes."""
-    id: str
-    title: str
-    content: str
-    folder_id: Optional[str] = None
-    vault_id: str
-    tags: List[str] = []
-    group_id: Optional[str] = None
-    permissions: Dict[str, str] = {}
-    links: List[str] = []
-    attachments: List[str] = []
-    ai_summary: Optional[str] = None
-    meta: Dict[str, str] = {}
-    owner_id: str = ""
-    is_deleted: bool = False
-    created_at: datetime
-    last_modified: datetime
+router = APIRouter(tags=["notes"])
 
 
 class CreateNoteRequest(BaseModel):
-    """Request body for POST /notes"""
     title: str
     content: str = ""
     folder_id: Optional[str] = None
@@ -86,605 +41,287 @@ class CreateNoteRequest(BaseModel):
 
 
 class UpdateNoteRequest(BaseModel):
-    """Request body for PUT /notes/{id}"""
     title: Optional[str] = None
     content: Optional[str] = None
     tags: Optional[List[str]] = None
-    folder_id: Optional[str] = "__UNSET__"   # sentinel: None means "remove from folder"
     meta: Optional[Dict[str, str]] = None
-    permissions: Optional[Dict[str, str]] = None
-    links: Optional[List[str]] = None
-    group_id: Optional[str] = "__UNSET__"
-
-
-class MoveNoteRequest(BaseModel):
-    """Request body for POST /notes/move"""
-    note_id: str
-    dest_folder_id: Optional[str] = None
-
-
-class TagRequest(BaseModel):
-    """Request body for POST /notes/{id}/tags"""
-    tag: str
-
-
-class MetaUpdateRequest(BaseModel):
-    """Request body for PUT /notes/{id}/meta"""
-    meta: Dict[str, str]
 
 
 class CreateFolderRequest(BaseModel):
-    """Request body for POST /notes/folders"""
     name: str
     parent_id: Optional[str] = None
 
 
 class UpdateFolderRequest(BaseModel):
-    """Request body for PUT /notes/folders/{id}"""
     name: Optional[str] = None
-    description: Optional[str] = None
 
 
-class FolderResponse(BaseModel):
-    """Folder response"""
-    id: str
-    name: str
-    vault_id: str
-    parent_id: Optional[str] = None
-    description: Optional[str] = None
-    note_ids: List[str] = []
-    created_at: datetime
-    last_modified: datetime
+class MoveNoteRequest(BaseModel):
+    note_id: str
+    dest_folder_id: Optional[str] = None
 
 
-# ============================================================================
-# Helpers
-# ============================================================================
+class AddTagRequest(BaseModel):
+    tag: str
 
 
-def _note_to_list_item(note) -> NoteListItem:
-    """Convert a Note model to a list item response."""
-    return NoteListItem(
-        id=note.id,
-        title=note.title,
-        folder_id=getattr(note, "folder_id", None),
-        tags=getattr(note, "tags", []) or [],
-        group_id=getattr(note, "group_id", None),
-        owner_id=getattr(note, "owner_id", ""),
-        is_deleted=getattr(note, "is_deleted", False),
-        created_at=note.created_at,
-        last_modified=note.last_modified,
-    )
+class UpdateMetaRequest(BaseModel):
+    meta: Dict[str, str]
 
 
-def _note_to_detail(note) -> NoteDetail:
-    """Convert a Note model to a full detail response."""
-    return NoteDetail(
-        id=note.id,
-        title=note.title,
-        content=getattr(note, "content", "") or "",
-        folder_id=getattr(note, "folder_id", None),
-        vault_id=getattr(note, "vault_id", ""),
-        tags=getattr(note, "tags", []) or [],
-        group_id=getattr(note, "group_id", None),
-        permissions=getattr(note, "permissions", {}) or {},
-        links=getattr(note, "links", []) or [],
-        attachments=getattr(note, "attachments", []) or [],
-        ai_summary=getattr(note, "ai_summary", None),
-        meta=getattr(note, "meta", {}) or {},
-        owner_id=getattr(note, "owner_id", ""),
-        is_deleted=getattr(note, "is_deleted", False),
-        created_at=note.created_at,
-        last_modified=note.last_modified,
-    )
+def _note_dict(note: Note) -> dict:
+    return {
+        "id": note.id,
+        "title": note.title,
+        "content": note.content,
+        "tags": note.tags,
+        "folder_id": note.folder_id,
+        "vault_id": note.vault_id,
+        "owner_id": note.owner_id,
+        "meta": note.meta,
+        "links": note.links,
+        "ai_summary": note.ai_summary,
+        "created_at": note.created_at.isoformat() if note.created_at else None,
+        "last_modified": note.last_modified.isoformat() if note.last_modified else None,
+    }
 
 
-def _folder_to_response(folder, ctx, user) -> FolderResponse:
-    """Convert a Folder model to a response."""
-    return FolderResponse(
-        id=folder.id,
-        name=folder.name,
-        vault_id=getattr(folder, "vault_id", ""),
-        parent_id=getattr(folder, "parent_id", None),
-        description=getattr(folder, "description", None),
-        note_ids=getattr(folder, "note_ids", []) or [],
-        created_at=folder.created_at,
-        last_modified=folder.last_modified,
-    )
+# ── Folder routes ────────────────────────────────────────────────────────────
 
 
-def _get_default_vault_id(ctx: AppContext, user: User) -> str:
-    return "default"
-
-
-def _get_note_or_404(ctx, note_id):
-    """Get note by ID or raise 404."""
-    note = ctx.notes.get_note(note_id)
-    if not note:
-        # Try reading by path (for file-based notes)
-        try:
-            content = ctx.storage.read_note(note_id)
-            from MythosEngine.models.note import Note as NoteModel
-            note = NoteModel(
-                id=note_id,
-                owner_id="",
-                vault_id="default",
-                title=note_id.rsplit("/", 1)[-1].replace(".md", ""),
-                content=content,
-            )
-        except Exception:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Note not found",
-            )
-    return note
-
-
-# ============================================================================
-# Note endpoints
-# ============================================================================
-
-
-# IMPORTANT: /search must come BEFORE /{note_id} to avoid being caught
-# by the path parameter route.
-@router.get("/search")
-async def search_notes(
-    q: str = Query(..., min_length=1, description="Search query"),
+@router.get("/notes/folders")
+def list_folders(
     ctx: AppContext = Depends(get_ctx),
-    user: User = Depends(get_current_user),
+    _user: User = Depends(get_current_user),
 ):
-    """Search notes by title and content."""
-    try:
-        ctx.storage.set_user_context(
-            user.id,
-            is_admin="admin" in (user.roles or []),
-            is_gm="gm" in (user.roles or []),
-        )
-        results = ctx.storage.search_notes(q, top_k=50)
-        return {
-            "results": [_note_to_list_item(n).model_dump() for n in results],
-            "count": len(results),
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Search failed: {str(e)}",
-        )
+    folders = ctx.storage.list_folders()
+    return {"folders": folders}
 
 
-@router.get("/folders", response_model=List[FolderResponse])
-async def list_folders(
+@router.post("/notes/folders", status_code=status.HTTP_201_CREATED)
+def create_folder(
+    body: CreateFolderRequest,
     ctx: AppContext = Depends(get_ctx),
-    user: User = Depends(get_current_user),
+    _current_user: User = Depends(get_current_user),
 ):
-    """List all folders."""
-    try:
-        results = []
+    path = body.name if not body.parent_id else f"{body.parent_id}/{body.name}"
+    ctx.storage.create_folder(path)
+    return {"path": path}
 
-        # Try getting folders from FolderManager first (structured)
+
+@router.put("/notes/folders/{folder_id:path}")
+def update_folder(
+    folder_id: str,
+    body: UpdateFolderRequest,
+    ctx: AppContext = Depends(get_ctx),
+    _user: User = Depends(get_current_user),
+):
+    if body.name:
+        parent = "/".join(folder_id.split("/")[:-1])
+        dest = f"{parent}/{body.name}" if parent else body.name
+        ctx.storage.move_folder(folder_id, dest)
+        return {"path": dest}
+    return {"path": folder_id}
+
+
+@router.delete("/notes/folders/{folder_id:path}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_folder(
+    folder_id: str,
+    ctx: AppContext = Depends(get_ctx),
+    _user: User = Depends(get_current_user),
+):
+    ctx.storage.delete_folder(folder_id)
+
+
+# ── Note routes ──────────────────────────────────────────────────────────────
+
+
+@router.get("/notes")
+def list_notes(
+    folder: str = Query(default=""),
+    tag: str = Query(default=""),
+    ctx: AppContext = Depends(get_ctx),
+    _user: User = Depends(get_current_user),
+):
+    paths = ctx.storage.list_notes(folder)
+    results = []
+    for p in paths:
         try:
-            # search_notes("") trick won't work for folders, so we use
-            # the storage's list_folders which returns paths
-            folder_paths = ctx.storage.list_folders() or []
-            for fpath in folder_paths:
-                # Try FolderManager first
-                folder_obj = None
+            meta = ctx.storage.get_note_metadata(p)
+            entry = {
+                "id": p,
+                "title": p.split("/")[-1].removesuffix(".md"),
+                "modified_date": meta.get("modified"),
+                "created_date": meta.get("created"),
+            }
+            if tag:
+                # Filter by tag: read note content only when needed
                 try:
-                    folder_obj = ctx.folders.get_folder(fpath)
+                    content = ctx.storage.read_note(p)
+                    if tag.lower() not in content.lower():
+                        continue
                 except Exception:
-                    pass
-
-                if folder_obj:
-                    results.append(_folder_to_response(folder_obj, ctx, user))
-                else:
-                    # File-based folder — build response from path
-                    name = fpath.rsplit("/", 1)[-1] if "/" in fpath else fpath
-                    name = name.rsplit("\\", 1)[-1] if "\\" in name else name
-                    meta = {}
-                    try:
-                        meta = ctx.storage.get_folder_metadata(fpath)
-                    except Exception:
-                        pass
-
-                    results.append(FolderResponse(
-                        id=fpath,
-                        name=name,
-                        vault_id=_get_default_vault_id(ctx, user),
-                        parent_id=None,
-                        description=None,
-                        note_ids=[],
-                        created_at=meta.get("created_at", datetime.utcnow()),
-                        last_modified=meta.get("last_modified", datetime.utcnow()),
-                    ))
+                    continue
+            results.append(entry)
         except Exception:
-            pass
-
-        return results
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list folders: {str(e)}",
-        )
+            results.append({"id": p, "title": p.split("/")[-1].removesuffix(".md")})
+    return {"notes": results}
 
 
-@router.get("/", response_model=List[NoteListItem])
-async def list_notes(
-    folder: str = Query("", description="Folder path to list notes from"),
-    tag: str = Query("", description="Filter by tag"),
+@router.get("/notes/search")
+def search_notes(
+    q: str = Query(..., min_length=1),
     ctx: AppContext = Depends(get_ctx),
-    user: User = Depends(get_current_user),
+    _user: User = Depends(get_current_user),
 ):
-    """List notes, optionally filtered by folder and/or tag."""
-    try:
-        ctx.storage.set_user_context(
-            user.id,
-            is_admin="admin" in (user.roles or []),
-            is_gm="gm" in (user.roles or []),
-        )
-
-        all_notes = ctx.storage.search_notes("", top_k=1000)
-
-        # Filter by folder
-        if folder:
-            all_notes = [
-                n for n in all_notes
-                if getattr(n, "folder_id", None) == folder
-                or n.id.startswith(folder)
-            ]
-
-        # Filter by tag
-        if tag:
-            all_notes = [
-                n for n in all_notes
-                if tag.lower() in [t.lower() for t in (getattr(n, "tags", []) or [])]
-            ]
-
-        # Exclude soft-deleted
-        all_notes = [n for n in all_notes if not getattr(n, "is_deleted", False)]
-
-        # Sort by last_modified descending
-        all_notes.sort(key=lambda n: n.last_modified, reverse=True)
-
-        return [_note_to_list_item(n) for n in all_notes]
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list notes: {str(e)}",
-        )
+    found = ctx.storage.search_notes(q)
+    return {"notes": [_note_dict(n) for n in found]}
 
 
-@router.get("/{note_id}", response_model=NoteDetail)
-async def get_note(
+@router.post("/notes", status_code=status.HTTP_201_CREATED)
+def create_note(
+    body: CreateNoteRequest,
+    ctx: AppContext = Depends(get_ctx),
+    current_user: User = Depends(get_current_user),
+):
+    note = ctx.notes.create_note(
+        vault_id=getattr(ctx.config, "VAULT_PATH", ""),
+        owner_id=current_user.id,
+        title=body.title,
+        content=body.content,
+        folder_id=body.folder_id,
+        tags=body.tags,
+        meta=body.meta,
+    )
+    return _note_dict(note)
+
+
+@router.get("/notes/{note_id:path}")
+def get_note(
     note_id: str,
     ctx: AppContext = Depends(get_ctx),
-    user: User = Depends(get_current_user),
+    _user: User = Depends(get_current_user),
 ):
-    """Get a specific note by ID with full content and metadata."""
-    try:
-        note = _get_note_or_404(ctx, note_id)
-        return _note_to_detail(note)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get note: {str(e)}",
-        )
+    # Try by UUID first, then by path
+    note = ctx.notes.get_note(note_id)
+    if note is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found.")
+    return _note_dict(note)
 
 
-@router.post("/", response_model=NoteDetail)
-async def create_note(
-    req: CreateNoteRequest,
-    ctx: AppContext = Depends(get_ctx),
-    user: User = Depends(get_current_user),
-):
-    """Create a new note."""
-    try:
-        vault_id = _get_default_vault_id(ctx, user)
-        note = ctx.notes.create_note(
-            vault_id=vault_id,
-            owner_id=user.id,
-            title=req.title,
-            content=req.content,
-            folder_id=req.folder_id,
-            tags=req.tags,
-        )
-        # Set meta if provided
-        if req.meta:
-            note.meta = req.meta
-            ctx.notes.update_note(note, actor_id=user.id)
-
-        return _note_to_detail(note)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create note: {str(e)}",
-        )
-
-
-@router.put("/{note_id}", response_model=NoteDetail)
-async def update_note(
+@router.put("/notes/{note_id:path}")
+def update_note(
     note_id: str,
-    req: UpdateNoteRequest,
+    body: UpdateNoteRequest,
     ctx: AppContext = Depends(get_ctx),
-    user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    """Update an existing note — any combination of fields."""
+    note = ctx.notes.get_note(note_id)
+    if note is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found.")
+    if body.title is not None:
+        note.title = body.title
+    if body.content is not None:
+        note.content = body.content
+    if body.tags is not None:
+        note.tags = body.tags
+    if body.meta is not None:
+        note.meta.update(body.meta)
     try:
-        note = _get_note_or_404(ctx, note_id)
-
-        if req.title is not None:
-            note.title = req.title
-        if req.content is not None:
-            note.content = req.content
-        if req.tags is not None:
-            note.tags = req.tags
-        if req.folder_id != "__UNSET__":
-            note.folder_id = req.folder_id
-        if req.meta is not None:
-            note.meta = {**(getattr(note, "meta", {}) or {}), **req.meta}
-        if req.permissions is not None:
-            note.permissions = req.permissions
-        if req.links is not None:
-            note.links = req.links
-        if req.group_id != "__UNSET__":
-            note.group_id = req.group_id
-
-        ctx.notes.update_note(note, actor_id=user.id)
-        return _note_to_detail(note)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update note: {str(e)}",
-        )
+        ctx.notes.update_note(note, actor_id=current_user.id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    return _note_dict(note)
 
 
-@router.delete("/{note_id}")
-async def delete_note(
+@router.delete("/notes/{note_id:path}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_note(
     note_id: str,
     ctx: AppContext = Depends(get_ctx),
-    user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    """Delete a note."""
+    note = ctx.notes.get_note(note_id)
+    if note is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found.")
     try:
-        note = _get_note_or_404(ctx, note_id)
-
-        is_admin = "admin" in (user.roles or [])
-        if note.owner_id != user.id and not is_admin:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied",
-            )
-
-        ctx.notes.delete_note(note_id, actor_id=user.id)
-        return {"message": "Note deleted successfully"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete note: {str(e)}",
-        )
+        ctx.notes.delete_note(note_id, actor_id=current_user.id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
 
 
-@router.post("/move")
-async def move_note(
-    req: MoveNoteRequest,
+@router.post("/notes/move")
+def move_note(
+    body: MoveNoteRequest,
     ctx: AppContext = Depends(get_ctx),
-    user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    """Move a note to a different folder."""
+    note = ctx.notes.get_note(body.note_id)
+    if note is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found.")
+    dest_prefix = f"{body.dest_folder_id}/" if body.dest_folder_id else ""
+    safe_title = note.title.replace("/", "_").replace("\\", "_")
+    dest_path = f"{dest_prefix}{safe_title}.md"
+    # Prefer the stored _path meta; fall back to note.id (the filesystem path for HybridStorage)
+    src_path = note.meta.get("_path") or note.id
+    ctx.storage.move_note(src_path, dest_path)
+    note.folder_id = body.dest_folder_id
+    note.meta["_path"] = dest_path
     try:
-        note = _get_note_or_404(ctx, req.note_id)
-
-        is_admin = "admin" in (user.roles or [])
-        if note.owner_id != user.id and not is_admin:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied",
-            )
-
-        note.folder_id = req.dest_folder_id
-        ctx.notes.update_note(note, actor_id=user.id)
-        return {"message": "Note moved successfully", "note_id": note.id}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Move failed: {str(e)}",
-        )
+        ctx.notes.update_note(note, actor_id=current_user.id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    return _note_dict(note)
 
 
-# ============================================================================
-# Tag endpoints (nested under /notes/{note_id}/tags)
-# ============================================================================
-
-
-@router.post("/{note_id}/tags", response_model=NoteDetail)
-async def add_tag(
+@router.post("/notes/{note_id:path}/tags", status_code=status.HTTP_201_CREATED)
+def add_tag(
     note_id: str,
-    req: TagRequest,
+    body: AddTagRequest,
     ctx: AppContext = Depends(get_ctx),
-    user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    """Add a tag to a note."""
-    try:
+    note = ctx.notes.get_note(note_id)
+    if note is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found.")
+    if body.tag not in note.tags:
+        note.tags.append(body.tag)
         try:
-            ctx.notes.add_tag(note_id, req.tag)
-            note = ctx.notes.get_note(note_id)
-        except Exception:
-            # Fallback if NoteManager.add_tag doesn't exist
-            note = _get_note_or_404(ctx, note_id)
-            tags = list(set((getattr(note, "tags", []) or []) + [req.tag]))
-            note.tags = tags
-            ctx.notes.update_note(note, actor_id=user.id)
-
-        return _note_to_detail(note)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to add tag: {str(e)}",
-        )
+            ctx.notes.update_note(note, actor_id=current_user.id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    return {"tags": note.tags}
 
 
-@router.delete("/{note_id}/tags/{tag}", response_model=NoteDetail)
-async def remove_tag(
+@router.delete("/notes/{note_id:path}/tags/{tag}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_tag(
     note_id: str,
     tag: str,
     ctx: AppContext = Depends(get_ctx),
-    user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    """Remove a tag from a note."""
+    note = ctx.notes.get_note(note_id)
+    if note is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found.")
+    note.tags = [t for t in note.tags if t != tag]
     try:
-        try:
-            ctx.notes.remove_tag(note_id, tag)
-            note = ctx.notes.get_note(note_id)
-        except Exception:
-            note = _get_note_or_404(ctx, note_id)
-            tags = [t for t in (getattr(note, "tags", []) or []) if t != tag]
-            note.tags = tags
-            ctx.notes.update_note(note, actor_id=user.id)
-
-        return _note_to_detail(note)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to remove tag: {str(e)}",
-        )
+        ctx.notes.update_note(note, actor_id=current_user.id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
 
 
-# ============================================================================
-# Metadata endpoint
-# ============================================================================
-
-
-@router.put("/{note_id}/meta", response_model=NoteDetail)
-async def update_meta(
+@router.put("/notes/{note_id:path}/meta")
+def update_meta(
     note_id: str,
-    req: MetaUpdateRequest,
+    body: UpdateMetaRequest,
     ctx: AppContext = Depends(get_ctx),
-    user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    """Update note metadata (merge into existing meta dict)."""
+    note = ctx.notes.get_note(note_id)
+    if note is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found.")
+    note.meta.update(body.meta)
     try:
-        note = _get_note_or_404(ctx, note_id)
-        existing_meta = getattr(note, "meta", {}) or {}
-        # Merge: new values override, null values remove keys
-        for k, v in req.meta.items():
-            if v is None or v == "":
-                existing_meta.pop(k, None)
-            else:
-                existing_meta[k] = v
-        note.meta = existing_meta
-        ctx.notes.update_note(note, actor_id=user.id)
-        return _note_to_detail(note)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update metadata: {str(e)}",
-        )
-
-
-# ============================================================================
-# Folder endpoints (nested under /notes/folders)
-# ============================================================================
-
-
-@router.post("/folders", response_model=FolderResponse)
-async def create_folder(
-    req: CreateFolderRequest,
-    ctx: AppContext = Depends(get_ctx),
-    user: User = Depends(get_current_user),
-):
-    """Create a new folder."""
-    try:
-        vault_id = _get_default_vault_id(ctx, user)
-        folder = ctx.folders.create_folder(
-            vault_id=vault_id,
-            name=req.name,
-            owner_id=user.id,
-            parent_id=req.parent_id,
-        )
-        return _folder_to_response(folder, ctx, user)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create folder: {str(e)}",
-        )
-
-
-@router.put("/folders/{folder_id}", response_model=FolderResponse)
-async def update_folder(
-    folder_id: str,
-    req: UpdateFolderRequest,
-    ctx: AppContext = Depends(get_ctx),
-    user: User = Depends(get_current_user),
-):
-    """Rename or update a folder."""
-    try:
-        folder = ctx.folders.get_folder(folder_id)
-        if not folder:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Folder not found",
-            )
-
-        if req.name is not None:
-            folder.name = req.name
-        if req.description is not None:
-            folder.description = req.description
-
-        ctx.folders.update_folder(folder)
-        return _folder_to_response(folder, ctx, user)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update folder: {str(e)}",
-        )
-
-
-@router.delete("/folders/{folder_id}")
-async def delete_folder(
-    folder_id: str,
-    ctx: AppContext = Depends(get_ctx),
-    user: User = Depends(get_current_user),
-):
-    """Delete a folder."""
-    try:
-        folder = ctx.folders.get_folder(folder_id)
-        if not folder:
-            if ctx.storage.folder_exists(folder_id):
-                ctx.storage.delete_folder(folder_id)
-                return {"message": "Folder deleted successfully"}
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Folder not found",
-            )
-
-        is_admin = "admin" in (user.roles or [])
-        if folder.owner_id != user.id and not is_admin:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied",
-            )
-
-        ctx.folders.delete_folder(folder_id)
-        return {"message": "Folder deleted successfully"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete folder: {str(e)}",
-        )
+        ctx.notes.update_note(note, actor_id=current_user.id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    return {"meta": note.meta}

@@ -748,7 +748,7 @@ class SQLiteBackend(StorageBackend):
         orig = self._abs(note_path)
         version_dir = self.vault_path / ".versions" / Path(note_path).parent
         version_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         backup = version_dir / f"{orig.name}.{timestamp}.bak"
         shutil.copy2(str(orig), str(backup))
         return str(backup)
@@ -836,15 +836,16 @@ class SQLiteBackend(StorageBackend):
         Only updates the provided keys; non-overlapping keys are preserved.
         """
         with Session(self.engine) as session:
-            record = session.scalar(select(NoteRecord).where(NoteRecord.record_id == note_id))
+            record = session.scalar(select(NoteRecord).where(NoteRecord.id == note_id))
             if record:
                 existing = {}
                 try:
-                    existing = __import__("json").loads(record.data) if record.data else {}
+                    existing = json.loads(record.data) if record.data else {}
                 except Exception:
                     pass
                 existing.update(meta)
-                record.data = __import__("json").dumps(existing)
+                record.data = json.dumps(existing)
+                session.commit()
 
     # ========================================================================
     # Relationships / Wikilinks
