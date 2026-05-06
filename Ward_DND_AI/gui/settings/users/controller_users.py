@@ -2,7 +2,11 @@
 User Management controller — admin-only, wired to UserManager via AppContext.
 """
 
+import logging
+
 import bcrypt
+
+logger = logging.getLogger(__name__)
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -61,10 +65,10 @@ class UserManagementController:
                 for rec in session.query(UserRecord).all():
                     try:
                         users.append(User.model_validate_json(rec.data))
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+                    except Exception as exc:
+                        logger.warning("_load_all_users: skipping corrupt user record: %s", exc)
+        except Exception as exc:
+            logger.error("_load_all_users: database query failed: %s", exc)
         return users
 
     def _make_actions(self, user):

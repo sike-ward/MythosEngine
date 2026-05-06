@@ -38,11 +38,6 @@ class InviteListItem(BaseModel):
     used_by: str | None
 
 
-class GenerateInviteRequest(BaseModel):
-    """Request body for POST /invites (currently no parameters)"""
-    pass
-
-
 class GenerateInviteResponse(BaseModel):
     """Response body for POST /invites"""
     code: str

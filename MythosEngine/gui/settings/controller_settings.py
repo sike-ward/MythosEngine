@@ -50,5 +50,28 @@ class SettingsController:
         if idx is not None:
             self.view.switch_tab(idx)
 
-    def on_config_changed(self, key, value):
-        pass
+    def on_config_changed(self, key: str, value) -> None:
+        """Propagate a runtime config change to the live AI engine and reload the AI settings view."""
+        ai_ctrl = self.controllers.get("ai")
+        if key == "OPENAI_API_KEY":
+            self.ai_engine.update_api_key(value)
+            if ai_ctrl and hasattr(ai_ctrl, "_load_settings"):
+                ai_ctrl._load_settings()
+        elif key == "COMPLETION_MODEL":
+            self.ai_engine.update_models(
+                getattr(self.config, "EMBEDDING_MODEL", "text-embedding-3-small"),
+                value,
+            )
+            if ai_ctrl and hasattr(ai_ctrl, "_load_settings"):
+                ai_ctrl._load_settings()
+        elif key == "EMBEDDING_MODEL":
+            self.ai_engine.update_models(
+                value,
+                getattr(self.config, "COMPLETION_MODEL", "gpt-4o"),
+            )
+            if ai_ctrl and hasattr(ai_ctrl, "_load_settings"):
+                ai_ctrl._load_settings()
+        elif key == "MAX_TOKENS":
+            self.ai_engine.update_max_tokens(int(value))
+            if ai_ctrl and hasattr(ai_ctrl, "_load_settings"):
+                ai_ctrl._load_settings()

@@ -32,8 +32,6 @@ from Ward_DND_AI.gui.settings.view_settings import SettingsView
 from Ward_DND_AI.gui.universe.timeline.controller_timeline import TimelineController
 from Ward_DND_AI.gui.universe.timeline.view_timeline import TimelineView
 
-# ... imports as before ...
-
 
 class LoreMainApp(QMainWindow):
     def __init__(self, ctx):
@@ -96,8 +94,6 @@ class LoreMainApp(QMainWindow):
         self._setup_menubar()
         self._setup_shortcuts()
 
-    # ... rest of the file unchanged ...
-
     def _setup_menubar(self):
         from PyQt6.QtGui import QAction, QKeySequence
 
@@ -133,8 +129,19 @@ class LoreMainApp(QMainWindow):
         self.setMenuBar(menubar)
 
     def _setup_shortcuts(self):
-        # Placeholder for keyboard shortcuts wiring
-        pass
+        from PyQt6.QtGui import QKeySequence, QShortcut
+
+        tab_bindings = [
+            ("Ctrl+1", "Dashboard"),
+            ("Ctrl+2", "AI"),
+            ("Ctrl+3", "Browse"),
+            ("Ctrl+4", "Create"),
+            ("Ctrl+5", "Universe"),
+            ("Ctrl+6", "Settings"),
+        ]
+        for seq, label in tab_bindings:
+            sc = QShortcut(QKeySequence(seq), self)
+            sc.activated.connect(lambda lbl=label: self.tabview.setCurrentWidget(self.tabs.get(lbl, self.centralWidget())))
 
     # --- Menu Actions ---
     def _menu_new_note(self):

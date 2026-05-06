@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xxd \"/c/Users/Evan/Desktop/MythosEngine/.claude/worktrees/frosty-rhodes-46266d/Ward_DND_AI/gui/create/controller_create.py\")"
+    ]
+  }
+}
