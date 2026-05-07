@@ -41,6 +41,22 @@ async function request(method, path, body = null) {
   return res.json();
 }
 
+async function requestText(method, path) {
+  const headers = { "Content-Type": "application/json" };
+  if (_token) headers["Authorization"] = `Bearer ${_token}`;
+  const res = await fetch(`${BASE}${path}`, { method, headers });
+  if (res.status === 401) {
+    setToken(null);
+    window.location.hash = "#/login";
+    throw new Error("Session expired");
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Request failed");
+  }
+  return res.text();
+}
+
 // ── Auth ─────────────────────────────────────────────────────────────────────
 export const auth = {
   status: async () => {
@@ -144,4 +160,12 @@ export const invites = {
   list: () => request("GET", "/invites"),
   generate: () => request("POST", "/invites"),
   revoke: (id) => request("DELETE", `/invites/${id}`),
+};
+
+// ── Debug (admin) ─────────────────────────────────────────────────────────────
+export const debug = {
+  listCrashLogs: () => request("GET", "/debug/crash-logs"),
+  getCrashLog: (filename) => request("GET", `/debug/crash-logs/${encodeURIComponent(filename)}`),
+  deleteCrashLog: (filename) => request("DELETE", `/debug/crash-logs/${encodeURIComponent(filename)}`),
+  getRuntimeLog: () => request("GET", "/debug/runtime-log"),
 };

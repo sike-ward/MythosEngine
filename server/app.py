@@ -38,7 +38,7 @@ except ImportError:
 from MythosEngine.config.config import Config
 from MythosEngine.context.app_context import AppContext
 
-from server.routes import auth, notes, ai, dashboard, users, settings, invites
+from server.routes import auth, notes, ai, dashboard, users, settings, invites, debug
 
 
 # ============================================================================
@@ -124,6 +124,7 @@ app.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 app.include_router(users.router, prefix="/users", tags=["users"])
 app.include_router(settings.router, prefix="/settings", tags=["settings"])
 app.include_router(invites.router, prefix="/invites", tags=["invites"])
+app.include_router(debug.router, prefix="/debug", tags=["debug"])
 
 
 # ============================================================================
