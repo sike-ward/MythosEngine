@@ -5,6 +5,9 @@ import Button from '@/components/Button';
 import Badge from '@/components/Badge';
 import { users, invites, dashboard } from '@/api';
 
+const ROLE_ADMIN = 'admin';
+const ROLE_PLAYER = 'player';
+
 export default function AdminSettings() {
   const queryClient = useQueryClient();
   const [resetUserId, setResetUserId] = useState(null);
@@ -93,8 +96,8 @@ export default function AdminSettings() {
   };
 
   const getUserRole = (u) => {
-    if (u.roles && Array.isArray(u.roles)) return u.roles[0] || 'player';
-    return u.role || 'player';
+    if (u.roles && Array.isArray(u.roles)) return u.roles[0] || ROLE_PLAYER;
+    return u.role || ROLE_PLAYER;
   };
 
   const normalizeRoles = (u) => {
@@ -103,18 +106,19 @@ export default function AdminSettings() {
     return [];
   };
 
-  const hasAdminRole = (u) => normalizeRoles(u).includes('admin');
+  const hasAdminRole = (u) => normalizeRoles(u).includes(ROLE_ADMIN);
+  const isInviteActive = (inv) => inv.is_active && (!inv.expires_at || new Date(inv.expires_at) > new Date());
 
   const adminCount = usersList.filter((u) => hasAdminRole(u)).length;
   const activeUserCount = usersList.filter((u) => u.is_active !== false).length;
-  const activeInvites = invitesList.filter((inv) => inv.is_active && (!inv.expires_at || new Date(inv.expires_at) > new Date())).length;
+  const activeInvites = invitesList.filter(isInviteActive).length;
 
   const handleRoleToggle = (u) => {
     const currentRoles = normalizeRoles(u);
     const nextRoles = hasAdminRole(u)
-      ? currentRoles.filter((r) => r !== 'admin')
-      : [...currentRoles, 'admin'];
-    if (nextRoles.length === 0) nextRoles.push('player');
+      ? currentRoles.filter((r) => r !== ROLE_ADMIN)
+      : [...currentRoles, ROLE_ADMIN];
+    if (nextRoles.length === 0) nextRoles.push(ROLE_PLAYER);
     updateRoleMutation.mutate({ id: u.id, roles: nextRoles });
   };
 
@@ -172,7 +176,7 @@ export default function AdminSettings() {
         ) : (
           <div className="space-y-2">
             {invitesList.map((inv) => {
-              const isActive = inv.is_active && (!inv.expires_at || new Date(inv.expires_at) > new Date());
+              const isActive = isInviteActive(inv);
               const isUsed = inv.used_by || (inv.use_count > 0 && inv.use_count >= (inv.max_uses || 1));
               const statusLabel = isUsed ? 'used' : isActive ? 'active' : 'expired';
               const statusVariant = isUsed ? 'disabled' : isActive ? 'active' : 'expired';
@@ -239,7 +243,7 @@ export default function AdminSettings() {
                     <td className="py-3 px-4 text-txt font-medium">{u.username}</td>
                     <td className="py-3 px-4 text-txt-secondary">{u.email}</td>
                     <td className="py-3 px-4">
-                      <Badge label={getUserRole(u)} variant={getUserRole(u) === 'admin' ? 'admin' : 'player'} />
+                      <Badge label={getUserRole(u)} variant={getUserRole(u) === ROLE_ADMIN ? 'admin' : 'player'} />
                     </td>
                     <td className="py-3 px-4">
                       <Badge
@@ -254,7 +258,7 @@ export default function AdminSettings() {
                         disabled={updateRoleMutation.isPending}
                         onClick={() => handleRoleToggle(u)}
                       >
-                        {getUserRole(u) === 'admin' ? 'Make Player' : 'Make Admin'}
+                        {getUserRole(u) === ROLE_ADMIN ? 'Make Player' : 'Make Admin'}
                       </Button>
                       <Button variant="secondary" size="sm" onClick={() => { setResetUserId(u.id); setResetNewPassword(''); }}>
                         Reset PW

@@ -46,10 +46,15 @@ export default function DebugSettings() {
     onError: () => toast.error('Failed to delete crash log'),
   });
 
-  const runtimeLines = useMemo(() => {
+  const runtimeLineEntries = useMemo(() => {
     const content = runtimeLog?.content || '';
     if (!content.trim()) return [];
-    return content.split('\n').slice(-200);
+    const seen = new Map();
+    return content.split('\n').slice(-200).map((line) => {
+      const count = (seen.get(line) || 0) + 1;
+      seen.set(line, count);
+      return { key: `${line}-${count}`, line };
+    });
   }, [runtimeLog]);
 
   const lineClass = (line) => {
@@ -79,11 +84,11 @@ export default function DebugSettings() {
             <div className="bg-card rounded-lg p-3 font-mono text-xs text-txt-muted min-h-[80px] max-h-[200px] overflow-y-auto">
               {runtimeLoading ? (
                 'Loading runtime log...'
-              ) : runtimeLines.length === 0 ? (
+              ) : runtimeLineEntries.length === 0 ? (
                 'No log entries available.'
               ) : (
-                runtimeLines.map((line, idx) => (
-                  <p key={`${idx}-${line}`} className={lineClass(line)}>{line}</p>
+                runtimeLineEntries.map(({ key, line }) => (
+                  <p key={key} className={lineClass(line)}>{line}</p>
                 ))
               )}
             </div>
