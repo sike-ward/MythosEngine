@@ -22,7 +22,4 @@ class CreateController(QObject):
         self.status_var = status_var
 
         # Hook up Random Generator inside Create
-
         self.random_ctrl = RandomGeneratorController(self.view.random_view, ctx)
-
-        # TODO: instantiate other sub-controllers here

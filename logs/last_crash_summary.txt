@@ -1,4 +1,0 @@
-ValidationError: 1 validation error for User
-email
-  value is not a valid email address: The part after the @-sign is a special-use or reserved name that cannot be used with email. [type=value_error, input_value='admin@ward-dnd.local', input_type=str]
-See full log: C:\Users\Evan\Desktop\Ward_DND_Campaign\logs\crash_2026-04-14_19-41-49.log
