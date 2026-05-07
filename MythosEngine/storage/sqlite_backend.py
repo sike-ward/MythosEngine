@@ -1,5 +1,3 @@
-import json
-
 """
 SQLite Storage Backend for MythosEngine.
 
@@ -19,6 +17,8 @@ Thread-safe for multi-threaded PyQt6 applications via create_engine with
 check_same_thread=False.
 """
 
+import json
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +26,8 @@ from typing import List, Optional, Set
 
 from sqlalchemy import String, Text, create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
+
+from MythosEngine.core.event_bus import get_event_bus
 
 # Mapped is in sqlalchemy.orm, not sqlalchemy.types
 from MythosEngine.models.character import Character
@@ -39,7 +41,9 @@ from MythosEngine.models.session import Session as SessionModel
 from MythosEngine.models.sound import Sound
 from MythosEngine.models.user import User
 from MythosEngine.models.vault import Vault
+from MythosEngine.search.vector_index import VectorIndexConfig, VectorIndexLocation, VectorIndexManager
 from MythosEngine.storage.storage_base import StorageBackend
+from MythosEngine.sync.conflict_resolver import DEFAULT_CONFLICT_STRATEGY, ConflictRecord, ConflictResolver
 
 # ============================================================================
 # SQLAlchemy ORM Models
@@ -168,6 +172,15 @@ class InviteRecord(Base):
     data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
 
 
+class RelationshipRecord(Base):
+    """Tracks [[wikilink]] relationships between notes (source → target)."""
+
+    __tablename__ = "note_relationships"
+
+    source_path: Mapped[str] = mapped_column(String(1024), primary_key=True)
+    target_path: Mapped[str] = mapped_column(String(1024), primary_key=True)
+
+
 # ============================================================================
 # SQLiteBackend
 # ============================================================================
@@ -206,6 +219,23 @@ class SQLiteBackend(StorageBackend):
         # Create all tables on first run
         Base.metadata.create_all(self.engine)
 
+        # Apply any pending Alembic migrations (stamps fresh DBs to head)
+        try:
+            from migrations.runner import run_migrations
+            run_migrations(self.engine)
+        except Exception:
+            pass
+
+        # AI cost tracking — records token usage per user/vault/operation.
+        from MythosEngine.ai.cost_tracker import CostTracker
+
+        self.cost_tracker = CostTracker(self.engine)
+
+        # Vector index — in-memory semantic search; builds lazily on first write.
+        self.vector_index = VectorIndexManager(
+            VectorIndexConfig(location=VectorIndexLocation.IN_MEMORY, enabled=True)
+        )
+
     def _session(self) -> Session:
         """Get a new database session."""
         return Session(self.engine)
@@ -223,6 +253,20 @@ class SQLiteBackend(StorageBackend):
     def absolute_path(self, rel: str) -> str:
         """Public interface: resolve a vault-relative path to an absolute string."""
         return str(self._abs(rel))
+
+    def _get_all_notes_for_index(self) -> list:
+        """Return all vault notes as dicts for vector index building."""
+        notes = []
+        for p in self.vault_path.rglob("*.md"):
+            if p.name.startswith("."):
+                continue
+            try:
+                content = p.read_text(encoding="utf-8", errors="replace")
+                rel = str(p.relative_to(self.vault_path))
+                notes.append({"note_path": rel, "title": p.stem, "content": content})
+            except Exception:
+                continue
+        return notes
 
     # ========================================================================
     # Users
@@ -466,6 +510,19 @@ class SQLiteBackend(StorageBackend):
         with self._session() as session:
             session.query(NoteRecord).filter(NoteRecord.id == note_id).delete()
             session.commit()
+        self.vector_index.clear()
+        self.vector_index.build_index(self._get_all_notes_for_index())
+
+    def soft_delete_note(self, note_id: str) -> None:
+        """Soft-delete a note by setting is_deleted=True in its JSON blob."""
+        with self._session() as session:
+            record = session.query(NoteRecord).filter(NoteRecord.id == note_id).first()
+            if record:
+                note = Note.model_validate_json(record.data)
+                note.is_deleted = True
+                note.last_modified = datetime.utcnow()
+                record.data = note.model_dump_json()
+                session.commit()
 
     def list_notes(self, folder: str = "") -> List[str]:
         """List note file paths the current user can access.
@@ -500,28 +557,74 @@ class SQLiteBackend(StorageBackend):
         """Read note content from markdown file."""
         return self._abs(path).read_text(encoding="utf-8")
 
-    def write_note(self, path: str, content: str) -> None:
-        """Write note content to markdown file."""
+    def write_note(self, path: str, content: str, updated_at: Optional[datetime] = None) -> None:
+        """Write note content to markdown file, resolving sync conflicts when detected."""
         abs_path = self._abs(path)
         abs_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Conflict detection: if the file on disk is newer than the incoming version,
+        # the caller is writing a stale copy — apply the configured resolution strategy.
+        if abs_path.is_file() and updated_at is not None:
+            existing_content = abs_path.read_text(encoding="utf-8")
+            if existing_content != content:
+                existing_mtime = datetime.fromtimestamp(abs_path.stat().st_mtime)
+                if existing_mtime > updated_at:
+                    record = ConflictRecord(
+                        note_path=path,
+                        local_version=existing_content,
+                        remote_version=content,
+                        local_updated_at=existing_mtime,
+                        remote_updated_at=updated_at,
+                    )
+                    content = ConflictResolver().resolve(record, DEFAULT_CONFLICT_STRATEGY)
+
         abs_path.write_text(content, encoding="utf-8")
+        self.vector_index.build_index(self._get_all_notes_for_index())
+        with self._session() as session:
+            self._sync_mentions(session, path, content)
+            session.commit()
+        try:
+            get_event_bus().note_saved.emit(path)
+        except Exception:
+            pass
 
     def delete_note(self, path: str) -> None:
-        """Delete a note markdown file."""
+        """Delete a note markdown file and remove its relationship records."""
         abs_path = self._abs(path)
         if abs_path.is_file():
             abs_path.unlink()
+        with self._session() as session:
+            session.query(RelationshipRecord).filter(
+                RelationshipRecord.source_path == path
+            ).delete()
+            session.commit()
+        self.vector_index.clear()
+        self.vector_index.build_index(self._get_all_notes_for_index())
+        try:
+            get_event_bus().note_deleted.emit(path)
+        except Exception:
+            pass
 
     def note_exists(self, path: str) -> bool:
         """Check if a note file exists."""
         return self._abs(path).is_file()
 
     def move_note(self, src_path: str, dest_path: str) -> None:
-        """Move a note from src to dest."""
+        """Move a note from src to dest, updating relationship source paths."""
         src = self._abs(src_path)
         dst = self._abs(dest_path)
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src), str(dst))
+        with self._session() as session:
+            for rec in session.query(RelationshipRecord).filter(
+                RelationshipRecord.source_path == src_path
+            ).all():
+                rec.source_path = dest_path
+            session.commit()
+        try:
+            get_event_bus().note_moved.emit(src_path, dest_path)
+        except Exception:
+            pass
 
     def copy_note(self, src_path: str, dest_path: str) -> None:
         """Copy a note from src to dest."""
@@ -704,7 +807,7 @@ class SQLiteBackend(StorageBackend):
         orig = self._abs(note_path)
         version_dir = self.vault_path / ".versions" / Path(note_path).parent
         version_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         backup = version_dir / f"{orig.name}.{timestamp}.bak"
         shutil.copy2(str(orig), str(backup))
         return str(backup)
@@ -753,17 +856,49 @@ class SQLiteBackend(StorageBackend):
         """Check if a note or folder exists."""
         return self._abs(rel_path).exists()
 
-    def search_notes(self, query: str, vault_id: str = "", top_k: int = 100) -> List[Note]:
+    def search_notes(
+        self,
+        query: str,
+        vault_id: str = "",
+        top_k: int = 100,
+        search_type: str = "fulltext",
+    ) -> List[Note]:
         """
-        Full-text search across all markdown notes.
+        Search across all markdown notes.
 
-        Case-insensitive substring match on title and content.
-        vault_id is accepted for interface compatibility but is ignored
-        (all notes in vault_path are searched).
+        Parameters
+        ----------
+        search_type : str
+            ``"semantic"`` uses the vector index (sentence_transformers cosine
+            similarity) when available, falling back to fulltext automatically.
+            ``"fulltext"`` (default) does case-insensitive substring matching on
+            title and content.
         """
+        if search_type == "semantic" and self.vector_index.is_available():
+            note_paths = self.vector_index.search(query, top_k=top_k)
+            results: List[Note] = []
+            for rel in note_paths:
+                p = self.vault_path / rel
+                if not p.is_file():
+                    continue
+                try:
+                    content = p.read_text(encoding="utf-8", errors="replace")
+                    results.append(
+                        Note(
+                            id=rel,
+                            owner_id="system",
+                            vault_id=vault_id or str(self.vault_path),
+                            title=p.stem,
+                            content=content,
+                        )
+                    )
+                except Exception:
+                    continue
+            return results
+
+        # Fulltext: case-insensitive substring match on title and content.
         query_lower = query.lower()
-        results: List[Note] = []
-
+        results = []
         for p in self.vault_path.rglob("*.md"):
             if p.name.startswith("."):
                 continue
@@ -792,15 +927,53 @@ class SQLiteBackend(StorageBackend):
         Only updates the provided keys; non-overlapping keys are preserved.
         """
         with Session(self.engine) as session:
-            record = session.scalar(select(NoteRecord).where(NoteRecord.record_id == note_id))
+            record = session.scalar(select(NoteRecord).where(NoteRecord.id == note_id))
             if record:
                 existing = {}
                 try:
-                    existing = __import__("json").loads(record.data) if record.data else {}
+                    existing = json.loads(record.data) if record.data else {}
                 except Exception:
                     pass
                 existing.update(meta)
-                record.data = __import__("json").dumps(existing)
+                record.data = json.dumps(existing)
+                session.commit()
+
+    # ========================================================================
+    # Relationships / Wikilinks
+    # ========================================================================
+
+    def _sync_mentions(self, session: Session, source_path: str, content: str) -> None:
+        """Replace all relationship rows for source_path with current [[wikilinks]]."""
+        targets = set(re.findall(r"\[\[([^\[\]]+)\]\]", content))
+        session.query(RelationshipRecord).filter(
+            RelationshipRecord.source_path == source_path
+        ).delete()
+        for target in targets:
+            session.add(RelationshipRecord(source_path=source_path, target_path=target))
+
+    def get_relationships(self, note_path: str) -> List[str]:
+        """Return targets that note_path links to (forward links)."""
+        with self._session() as session:
+            rows = session.query(RelationshipRecord).filter(
+                RelationshipRecord.source_path == note_path
+            ).all()
+            return [r.target_path for r in rows]
+
+    def get_backlinks(self, note_path: str) -> List[str]:
+        """Return source paths of notes that link to note_path (back-links)."""
+        with self._session() as session:
+            rows = session.query(RelationshipRecord).filter(
+                RelationshipRecord.target_path == note_path
+            ).all()
+            return [r.source_path for r in rows]
+
+    def upsert_relationship(self, source_path: str, target_path: str) -> None:
+        """Insert a single source→target relationship if it doesn't exist."""
+        with self._session() as session:
+            existing = session.get(RelationshipRecord, (source_path, target_path))
+            if not existing:
+                session.add(RelationshipRecord(source_path=source_path, target_path=target_path))
+                session.commit()
 
     # ========================================================================
     # Active Sessions (for admin panel)
