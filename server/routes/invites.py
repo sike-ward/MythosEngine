@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
 
-from server.deps import get_ctx, get_current_user
+from server.deps import get_ctx, get_current_user, require_admin
 
 
 router = APIRouter()
@@ -48,21 +48,6 @@ class GenerateInviteResponse(BaseModel):
     code: str
     expires_at: datetime
     message: str
-
-
-# ============================================================================
-# Helper: Require admin
-# ============================================================================
-
-
-def require_admin(user: User = Depends(get_current_user)):
-    """Dependency that ensures the user is an admin."""
-    if "admin" not in (user.roles or []):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
-        )
-    return user
 
 
 # ============================================================================

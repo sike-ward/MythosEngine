@@ -1,5 +1,4 @@
-"""
-MythosEngine FastAPI backend server.
+"""MythosEngine FastAPI backend server.
 
 Wraps the existing Python backend (AppContext) and exposes it as REST endpoints
 for the Electron/React frontend.
@@ -13,10 +12,11 @@ We need a QCoreApplication instance for QObject to work. We create a headless
 one at startup so the existing backend code works without modification.
 """
 
+import logging
 import os
 import sys
-from pathlib import Path
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,51 +33,57 @@ try:
     if _qt_app is None:
         _qt_app = QCoreApplication(sys.argv)
 except ImportError:
-    _qt_app = None  # PyQt6 not installed — AuthManager won't work but that's OK
+    _qt_app = None
 
 from MythosEngine.config.config import Config
 from MythosEngine.context.app_context import AppContext
 
-from server.routes import auth, notes, ai, dashboard, users, settings, invites
+from server.middleware.logging import LoggingMiddleware
+from server.routes import ai, auth, dashboard, health, invites, notes, settings, users
+
+logger = logging.getLogger(__name__)
+
+DEV_MODE = os.getenv("DEV_MODE", "true").lower() in ("1", "true", "yes")
 
 
 # ============================================================================
-# App startup/shutdown
+# App startup / shutdown
 # ============================================================================
 
 
-async def init_app_context() -> AppContext:
-    """
-    Initialize the AppContext on startup.
-    Mirrors what main.py does for the desktop app.
-    """
+async def _init_app_context() -> AppContext:
+    """Initialise AppContext on startup, mirroring what main.py does."""
     config = Config()
     ctx = AppContext(config)
 
-    # Wire up the AI engine (optional — fails gracefully)
     try:
         from MythosEngine.ai.core.model_router import ModelRouter
         ctx.ai = ModelRouter(ctx.config, storage=ctx.storage)
-    except Exception as e:
-        print(f"[server] AI engine not available: {e}")
+    except Exception as exc:
+        logger.warning("[server] AI engine not available: %s", exc)
 
     return ctx
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Manage app startup and shutdown.
-    """
-    ctx = await init_app_context()
+    """Manage app startup and graceful shutdown."""
+    ctx = await _init_app_context()
     app.state.ctx = ctx
-    print("[server] MythosEngine API ready")
+
+    # Expose the token store on app.state so AuthMiddleware can resolve tokens
+    # without a full FastAPI dependency chain.
+    from server.deps import get_token_store, TokenStore
+    engine = getattr(ctx.storage, "engine", None)
+    app.state.token_store = TokenStore(engine=engine)
+
+    logger.info("[server] MythosEngine API ready (dev_mode=%s)", DEV_MODE)
     yield
-    print("[server] MythosEngine API shutting down")
+    logger.info("[server] MythosEngine API shutting down")
 
 
 # ============================================================================
-# FastAPI app creation
+# FastAPI app factory
 # ============================================================================
 
 app = FastAPI(
@@ -85,9 +91,13 @@ app = FastAPI(
     description="FastAPI backend for MythosEngine (Electron/React frontend)",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url="/docs" if DEV_MODE else None,
+    redoc_url="/redoc" if DEV_MODE else None,
+    openapi_url="/openapi.json" if DEV_MODE else None,
 )
 
-# CORS — allow Vite dev server and Electron renderer
+# ── CORS ─────────────────────────────────────────────────────────────────────
+# Allow Vite dev server, CRA dev server, and Electron renderer (app://)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -95,28 +105,23 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "app://*",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
-# ============================================================================
-# Health check
-# ============================================================================
-
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint — used by Electron to wait for server readiness."""
-    return {"status": "ok"}
+# ── Logging middleware ────────────────────────────────────────────────────────
+# Logs: {method} {path} → {status_code} ({duration_ms}ms)
+app.add_middleware(LoggingMiddleware)
 
 
 # ============================================================================
-# Route modules
+# Route registration
 # ============================================================================
 
+app.include_router(health.router, tags=["health"])
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(notes.router, prefix="/notes", tags=["notes"])
 app.include_router(ai.router, prefix="/ai", tags=["ai"])
@@ -133,12 +138,12 @@ app.include_router(invites.router, prefix="/invites", tags=["invites"])
 
 @app.get("/")
 async def root():
-    """Root endpoint — API information."""
+    """API information and available documentation links."""
     return {
         "name": "MythosEngine API",
         "version": "0.1.0",
-        "docs": "/docs",
-        "openapi": "/openapi.json",
+        "docs": "/docs" if DEV_MODE else None,
+        "openapi": "/openapi.json" if DEV_MODE else None,
     }
 
 

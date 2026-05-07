@@ -4,6 +4,8 @@ Dependency injection for FastAPI endpoints.
 Provides:
 - get_ctx: Access to AppContext
 - get_current_user: Current authenticated user (requires Bearer token)
+- require_admin: Dependency that enforces admin role
+- PermissionChecker: Callable dependency for checking named permissions
 - TokenStore: SQLite-backed token persistence (survives server restarts)
 """
 
@@ -204,3 +206,40 @@ def get_current_user(
         )
 
     return user
+
+
+def require_admin(user: User = Depends(get_current_user)) -> User:
+    """Dependency that raises 403 if the authenticated user is not an admin."""
+    if "admin" not in (user.roles or []):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return user
+
+
+class PermissionChecker:
+    """Callable dependency factory that checks whether a user has a named permission.
+
+    Usage::
+
+        @router.get("/example")
+        async def example(user: User = Depends(PermissionChecker("notes:write"))):
+            ...
+
+    Admins always pass. Other users pass only if the permission string
+    appears in their roles list (simple role-based check; extend as needed).
+    """
+
+    def __init__(self, permission: str) -> None:
+        self.permission = permission
+
+    def __call__(self, user: User = Depends(get_current_user)) -> User:
+        if "admin" in (user.roles or []):
+            return user
+        if self.permission in (user.roles or []):
+            return user
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Permission denied: {self.permission}",
+        )

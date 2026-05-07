@@ -22,7 +22,7 @@ from pydantic import BaseModel, field_validator
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
 
-from server.deps import get_ctx, get_current_user
+from server.deps import get_ctx, get_current_user, require_admin
 
 
 router = APIRouter()
@@ -62,21 +62,6 @@ class ResetPasswordRequest(BaseModel):
         if not any(c.isdigit() for c in v):
             raise ValueError("Password must contain at least one number")
         return v
-
-
-# ============================================================================
-# Helper: Require admin
-# ============================================================================
-
-
-def require_admin(user: User = Depends(get_current_user)):
-    """Dependency that ensures the user is an admin."""
-    if "admin" not in (user.roles or []):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
-        )
-    return user
 
 
 def _list_all_users(ctx: AppContext) -> List[User]:

@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
 
-from server.deps import get_ctx, get_current_user
+from server.deps import get_ctx, get_current_user, require_admin
 
 
 router = APIRouter()
@@ -97,15 +97,12 @@ async def get_settings(
 async def update_settings(
     req: UpdateSettingsRequest,
     ctx: AppContext = Depends(get_ctx),
-    user: User = Depends(get_current_user),
+    admin: User = Depends(require_admin),
 ):
     """
-    Update application settings.
+    Update application settings. Requires admin role.
 
-    Only authenticated users can update settings. Settings are stored in
-    the config file and persisted across app restarts.
-
-    Requires authentication.
+    Settings are stored in the config file and persisted across app restarts.
     """
     try:
         config = ctx.config
