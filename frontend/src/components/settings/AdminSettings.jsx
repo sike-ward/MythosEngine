@@ -97,14 +97,15 @@ export default function AdminSettings() {
     return u.role || 'player';
   };
 
-  const adminCount = usersList.filter((u) => (u.roles || []).includes('admin') || u.role === 'admin').length;
+  const hasAdminRole = (u) => (u.roles || []).includes('admin') || u.role === 'admin';
+
+  const adminCount = usersList.filter((u) => hasAdminRole(u)).length;
   const activeUserCount = usersList.filter((u) => u.is_active !== false).length;
   const activeInvites = invitesList.filter((inv) => inv.is_active && (!inv.expires_at || new Date(inv.expires_at) > new Date())).length;
 
   const handleRoleToggle = (u) => {
     const currentRoles = Array.isArray(u.roles) ? [...u.roles] : [getUserRole(u)];
-    const hasAdmin = currentRoles.includes('admin');
-    const nextRoles = hasAdmin
+    const nextRoles = hasAdminRole(u)
       ? currentRoles.filter((r) => r !== 'admin')
       : [...currentRoles, 'admin'];
     if (nextRoles.length === 0) nextRoles.push('player');
