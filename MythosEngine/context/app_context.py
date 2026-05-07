@@ -30,7 +30,6 @@ from MythosEngine.managers.image_manager import ImageManager
 from MythosEngine.managers.invite_manager import InviteManager
 from MythosEngine.managers.map_manager import MapManager
 from MythosEngine.managers.note_manager import NoteManager
-from MythosEngine.managers.session_manager import SessionManager
 from MythosEngine.managers.sound_manager import SoundManager
 from MythosEngine.managers.user_manager import UserManager
 from MythosEngine.managers.vault_manager import VaultManager
@@ -77,7 +76,6 @@ class AppContext:
     maps : MapManager
     images : ImageManager
     sounds : SoundManager
-    sessions : SessionManager
     permissions : PermissionChecker
     """
 
@@ -113,7 +111,6 @@ class AppContext:
         self.maps = MapManager(self.storage)
         self.images = ImageManager(self.storage)
         self.sounds = SoundManager(self.storage)
-        self.sessions = SessionManager(self.storage)
         self.invites = InviteManager(self.storage)
 
         # Permission checker — stateless, shared across all managers
