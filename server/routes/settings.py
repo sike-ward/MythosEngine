@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends
 
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
-from server.dependencies import get_ctx, get_current_user
+from server.deps import get_ctx, get_current_user
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
