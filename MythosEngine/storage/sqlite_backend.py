@@ -18,11 +18,14 @@ check_same_thread=False.
 """
 
 import json
+import logging
 import re
 import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Set
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import Boolean, DateTime, Index, String, Text, create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
@@ -118,6 +121,10 @@ class NoteRecord(Base):
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     folder: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, default="")
+    # Denormalized columns for FTS5 triggers — populated in save_note()
+    title: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")
+    content: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")
+    tags: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")
 
 
 class CharacterRecord(Base):
@@ -238,6 +245,18 @@ class SQLiteBackend(StorageBackend):
         except Exception:
             pass
 
+        # FTS5 full-text search index
+        self._fts_available = False
+        raw_conn = self.engine.raw_connection()
+        try:
+            self._setup_fts(raw_conn)
+            raw_conn.commit()
+            self._fts_available = True
+        except Exception as exc:
+            logger.warning("FTS5 not available: %s — falling back to LIKE search.", exc)
+        finally:
+            raw_conn.close()
+
         # AI cost tracking — records token usage per user/vault/operation.
         from MythosEngine.ai.cost_tracker import CostTracker
 
@@ -251,6 +270,37 @@ class SQLiteBackend(StorageBackend):
     def _session(self) -> Session:
         """Get a new database session."""
         return Session(self.engine)
+
+    def _setup_fts(self, conn) -> None:
+        """Create the FTS5 virtual table and sync triggers on the raw SQLite connection."""
+        # Add denormalized columns to notes if they're missing (existing DBs pre-FTS).
+        for col, default in (("title", "''"), ("content", "''"), ("tags", "''")):
+            try:
+                conn.execute(f"ALTER TABLE notes ADD COLUMN {col} TEXT DEFAULT {default}")
+            except Exception:
+                pass  # column already exists
+
+        conn.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts
+            USING fts5(id UNINDEXED, title, content, tags, tokenize='porter ascii')
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS notes_fts_insert AFTER INSERT ON notes BEGIN
+                INSERT INTO notes_fts(id, title, content, tags)
+                VALUES (new.id, new.title, new.content, new.tags);
+            END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS notes_fts_update AFTER UPDATE ON notes BEGIN
+                UPDATE notes_fts SET title=new.title, content=new.content, tags=new.tags
+                WHERE id=new.id;
+            END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS notes_fts_delete AFTER DELETE ON notes BEGIN
+                DELETE FROM notes_fts WHERE id=old.id;
+            END
+        """)
 
     def _dnd_meta_path(self, subfolder: str, obj_id: str) -> Path:
         """Return the JSON path for a model object's metadata, creating dir if needed."""
@@ -486,6 +536,9 @@ class SQLiteBackend(StorageBackend):
         _created_at = getattr(note, "created_at", None)
         _is_deleted = getattr(note, "is_deleted", False)
         _folder = getattr(note, "folder_id", "") or ""
+        _title = note.title or ""
+        _content = getattr(note, "content", "") or ""
+        _tags = " ".join(getattr(note, "tags", []) or [])
         with self._session() as session:
             record = session.query(NoteRecord).filter(NoteRecord.id == note.id).first()
             if record:
@@ -495,6 +548,9 @@ class SQLiteBackend(StorageBackend):
                 record.created_at = _created_at
                 record.is_deleted = _is_deleted
                 record.folder = _folder
+                record.title = _title
+                record.content = _content
+                record.tags = _tags
             else:
                 record = NoteRecord(
                     id=note.id,
@@ -504,6 +560,9 @@ class SQLiteBackend(StorageBackend):
                     created_at=_created_at,
                     is_deleted=_is_deleted,
                     folder=_folder,
+                    title=_title,
+                    content=_content,
+                    tags=_tags,
                 )
                 session.add(record)
             session.commit()
@@ -889,6 +948,143 @@ class SQLiteBackend(StorageBackend):
     def exists(self, rel_path: str) -> bool:
         """Check if a note or folder exists."""
         return self._abs(rel_path).exists()
+
+    def search_notes_fts(
+        self,
+        query: str,
+        vault_id: str = "",
+        skip: int = 0,
+        limit: int = 20,
+        folder: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+    ) -> dict:
+        """FTS5-powered full-text search with BM25 ranking and snippet highlighting.
+
+        Falls back to LIKE-based search when FTS5 is unavailable.
+        Returns ``{items, total, skip, limit}``.
+        """
+        if not self._fts_available:
+            return self._search_notes_like(query, vault_id, skip, limit, folder, tags, date_from, date_to)
+
+        raw_conn = self.engine.raw_connection()
+        try:
+            cursor = raw_conn.cursor()
+            sql = """
+                SELECT
+                    n.id,
+                    n.data,
+                    bm25(notes_fts) AS rank,
+                    snippet(notes_fts, 2, '<mark>', '</mark>', '...', 20) AS snippet
+                FROM notes_fts
+                JOIN notes n ON notes_fts.id = n.id
+                WHERE notes_fts MATCH ?
+                  AND n.is_deleted = 0
+            """
+            params: list = [query]
+
+            if vault_id:
+                sql += " AND n.vault_id = ?"
+                params.append(vault_id)
+            if folder:
+                sql += " AND (n.folder = ? OR n.folder LIKE ?)"
+                params.extend([folder, f"{folder}/%"])
+            if date_from:
+                sql += " AND n.created_at >= ?"
+                params.append(date_from)
+            if date_to:
+                sql += " AND n.created_at <= ?"
+                params.append(date_to)
+
+            sql += " ORDER BY rank"  # BM25 returns negatives; more negative = more relevant
+
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
+        except Exception as exc:
+            logger.warning("FTS5 query failed (%s), falling back to LIKE search.", exc)
+            raw_conn.close()
+            return self._search_notes_like(query, vault_id, skip, limit, folder, tags, date_from, date_to)
+        finally:
+            raw_conn.close()
+
+        all_items = []
+        for row in rows:
+            note_id, data_json, rank, snippet_text = row
+            try:
+                note = Note.model_validate_json(data_json)
+            except Exception:
+                continue
+
+            # Filter by ALL required tags (post-SQL, since tags are stored in JSON)
+            if tags:
+                note_tags_lower = [t.lower() for t in (getattr(note, "tags", []) or [])]
+                if not all(t.lower() in note_tags_lower for t in tags):
+                    continue
+
+            all_items.append({
+                "id": note.id,
+                "title": note.title,
+                "folder_id": getattr(note, "folder_id", None),
+                "tags": getattr(note, "tags", []) or [],
+                "group_id": getattr(note, "group_id", None),
+                "owner_id": getattr(note, "owner_id", ""),
+                "is_deleted": getattr(note, "is_deleted", False),
+                "created_at": note.created_at,
+                "last_modified": note.last_modified,
+                "snippet": snippet_text or "",
+            })
+
+        total = len(all_items)
+        page = all_items[skip: skip + limit]
+        return {"items": page, "total": total, "skip": skip, "limit": limit}
+
+    def _search_notes_like(
+        self,
+        query: str,
+        vault_id: str = "",
+        skip: int = 0,
+        limit: int = 20,
+        folder: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+    ) -> dict:
+        """LIKE-based search fallback used when FTS5 is unavailable."""
+        notes_list = self.search_notes(query, vault_id=vault_id, top_k=10000)
+
+        if folder:
+            notes_list = [n for n in notes_list
+                          if (getattr(n, "folder_id", "") or "").startswith(folder)]
+        if tags:
+            for t in tags:
+                notes_list = [n for n in notes_list
+                              if t.lower() in [x.lower() for x in (getattr(n, "tags", []) or [])]]
+        if date_from:
+            dt_from = datetime.fromisoformat(date_from)
+            notes_list = [n for n in notes_list if n.created_at and n.created_at >= dt_from]
+        if date_to:
+            dt_to = datetime.fromisoformat(date_to)
+            notes_list = [n for n in notes_list if n.created_at and n.created_at <= dt_to]
+
+        total = len(notes_list)
+        page = notes_list[skip: skip + limit]
+        items = [
+            {
+                "id": n.id,
+                "title": n.title,
+                "folder_id": getattr(n, "folder_id", None),
+                "tags": getattr(n, "tags", []) or [],
+                "group_id": getattr(n, "group_id", None),
+                "owner_id": getattr(n, "owner_id", ""),
+                "is_deleted": getattr(n, "is_deleted", False),
+                "created_at": n.created_at,
+                "last_modified": n.last_modified,
+                "snippet": "",
+            }
+            for n in page
+        ]
+        return {"items": items, "total": total, "skip": skip, "limit": limit}
 
     def search_notes(
         self,

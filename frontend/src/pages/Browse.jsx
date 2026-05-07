@@ -35,6 +35,7 @@ export default function Browse() {
   // ── Search ───────────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState(null);
+  const [searchHistory, setSearchHistory] = useState([]);
   const searchTimeout = useRef(null);
 
   // ── Tag filter ───────────────────────────────────────────────────────────
@@ -115,7 +116,12 @@ export default function Browse() {
     searchTimeout.current = setTimeout(async () => {
       try {
         const data = await notes.search(searchQuery);
-        setSearchResults(data.results || []);
+        setSearchResults(data.items || []);
+        // Push to history (deduplicate, keep last 10)
+        setSearchHistory((prev) => {
+          const deduped = prev.filter((q) => q !== searchQuery);
+          return [searchQuery, ...deduped].slice(0, 10);
+        });
       } catch {
         setSearchResults([]);
       }
@@ -356,6 +362,14 @@ export default function Browse() {
     });
   };
 
+  const handleHistorySelect = (query) => {
+    setSearchQuery(query);
+  };
+
+  const handleClearHistory = () => {
+    setSearchHistory([]);
+  };
+
   // ════════════════════════════════════════════════════════════════════════
   // RENDER
   // ════════════════════════════════════════════════════════════════════════
@@ -426,6 +440,9 @@ export default function Browse() {
           tagFilter={tagFilter}
           onTagFilter={setTagFilter}
           loading={loading}
+          searchHistory={searchHistory}
+          onHistorySelect={handleHistorySelect}
+          onClearHistory={handleClearHistory}
         />
 
         {/* CENTER PANEL */}

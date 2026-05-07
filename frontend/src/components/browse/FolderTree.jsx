@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import Card from '@/components/Card';
 import Button from '@/components/Button';
 import NoteList from './NoteList';
@@ -22,7 +23,12 @@ export default function FolderTree({
   tagFilter,
   onTagFilter,
   loading,
+  searchHistory = [],
+  onHistorySelect,
+  onClearHistory,
 }) {
+  const [historyOpen, setHistoryOpen] = useState(false);
+
   return (
     <Card className="w-72 flex-shrink-0 flex flex-col overflow-hidden p-0">
       {/* Search bar */}
@@ -31,9 +37,35 @@ export default function FolderTree({
           placeholder="Search notes..."
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
+          onFocus={() => setHistoryOpen(true)}
+          onBlur={() => setHistoryOpen(false)}
           className="w-full bg-elevated rounded-lg px-3 py-2 text-sm text-txt border border-transparent focus:border-accent focus:outline-none transition placeholder:text-txt-muted"
         />
       </div>
+
+      {/* Search history dropdown — shown when input is focused and empty */}
+      {historyOpen && !searchQuery && searchHistory.length > 0 && (
+        <div className="border-b border-txt-muted/10 bg-card">
+          {searchHistory.map((q, i) => (
+            <button
+              key={i}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { onHistorySelect(q); setHistoryOpen(false); }}
+              className="w-full text-left px-3 py-2 text-sm text-txt hover:bg-hover transition flex items-center gap-2 truncate"
+            >
+              <span className="text-txt-muted text-xs flex-shrink-0">↩</span>
+              <span className="truncate">{q}</span>
+            </button>
+          ))}
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => { onClearHistory(); setHistoryOpen(false); }}
+            className="w-full text-left px-3 py-2 text-xs text-txt-muted hover:bg-hover transition border-t border-txt-muted/10"
+          >
+            Clear history
+          </button>
+        </div>
+      )}
 
       {/* Tag filter */}
       {allTags.length > 0 && (
