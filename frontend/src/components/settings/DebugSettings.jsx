@@ -83,7 +83,7 @@ export default function DebugSettings() {
                 'No log entries available.'
               ) : (
                 runtimeLines.map((line, idx) => (
-                  <p key={idx} className={lineClass(line)}>{line}</p>
+                  <p key={`${idx}-${line}`} className={lineClass(line)}>{line}</p>
                 ))
               )}
             </div>
