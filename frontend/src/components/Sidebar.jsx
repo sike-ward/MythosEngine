@@ -5,6 +5,7 @@ import {
   BookOpen,
   Wand2,
   Globe,
+  Map,
   Settings,
   LogOut,
 } from 'lucide-react';
@@ -16,6 +17,7 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user }) => {
     { icon: BookOpen, label: 'Browse', path: '/browse' },
     { icon: Wand2, label: 'Create', path: '/create' },
     { icon: Globe, label: 'Universe', path: '/universe' },
+    { icon: Map, label: 'Maps', path: '/maps' },
   ];
 
   return (

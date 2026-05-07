@@ -731,6 +731,35 @@ class SQLiteBackend(StorageBackend):
             session.query(MapRecord).filter(MapRecord.id == map_id).delete()
             session.commit()
 
+    def list_maps(self, vault_id: str, map_type: Optional[str] = None) -> List[Map]:
+        """Return all non-deleted Maps for a vault, optionally filtered by map_type."""
+        results: List[Map] = []
+        with self._session() as session:
+            for record in session.query(MapRecord).all():
+                try:
+                    map_obj = Map.model_validate_json(record.data)
+                    if map_obj.is_deleted:
+                        continue
+                    if map_obj.vault_id != vault_id:
+                        continue
+                    if map_type and map_obj.map_type != map_type:
+                        continue
+                    results.append(map_obj)
+                except Exception:
+                    continue
+        return results
+
+    def soft_delete_map(self, map_id: str) -> None:
+        """Soft-delete a map by setting is_deleted=True in its JSON blob."""
+        with self._session() as session:
+            record = session.query(MapRecord).filter(MapRecord.id == map_id).first()
+            if record:
+                map_obj = Map.model_validate_json(record.data)
+                map_obj.is_deleted = True
+                map_obj.last_modified = datetime.utcnow()
+                record.data = map_obj.model_dump_json()
+                session.commit()
+
     def save_image(self, image: Image) -> None:
         """Save or update an Image record."""
         with self._session() as session:
