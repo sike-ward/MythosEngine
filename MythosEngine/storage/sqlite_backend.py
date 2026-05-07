@@ -1363,6 +1363,8 @@ class SQLiteBackend(StorageBackend):
                 note = Note.model_validate(entry)
                 note.owner_id = owner_id
                 note.vault_id = imported_vault.id
+                # Imported permissions and group bindings are intentionally reset so
+                # the receiving vault never inherits stale access from another system.
                 note.permissions = {}
                 note.group_id = None
                 self.save_note(note)

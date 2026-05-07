@@ -19,7 +19,10 @@ export default function AdminGroups() {
 
   const { data: groupList = [] } = useQuery({ queryKey: ['groups'], queryFn: groups.list });
   const { data: userList = [] } = useQuery({ queryKey: ['users'], queryFn: users.list });
-  const selectedGroup = useMemo(() => groupList.find((group) => group.id === selectedGroupId) || null, [groupList, selectedGroupId]);
+  const selectedGroup = useMemo(
+    () => groupList.find((group) => group.id === selectedGroupId) || null,
+    [groupList, selectedGroupId]
+  );
 
   useEffect(() => {
     setGroupName(selectedGroup?.name || '');

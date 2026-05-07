@@ -24,7 +24,10 @@ class RealtimeHub:
     async def disconnect(self, vault_id: str, user_id: str, websocket: WebSocket) -> None:
         async with self._lock:
             self._connections[vault_id].discard(websocket)
-            if not any(ws.client_state.name == "CONNECTED" for ws in self._connections[vault_id]):
+            if not any(
+                getattr(getattr(ws, "client_state", None), "name", "") == "CONNECTED"
+                for ws in self._connections[vault_id]
+            ):
                 self._connections.pop(vault_id, None)
             self._online_users[vault_id].pop(user_id, None)
             for note_id, presence in list(self._editing[vault_id].items()):

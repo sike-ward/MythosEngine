@@ -25,7 +25,7 @@ router = APIRouter()
 
 
 class InviteListItem(BaseModel):
-    """Invite code item in list response"""
+    """Invite code item in list response, including expiry, usage, and computed status."""
 
     id: str
     code: str
@@ -40,7 +40,7 @@ class InviteListItem(BaseModel):
 
 
 class GenerateInviteResponse(BaseModel):
-    """Response body for POST /invites"""
+    """Response body for POST /invites, including expiry and max-use limits."""
 
     code: str
     expires_at: datetime

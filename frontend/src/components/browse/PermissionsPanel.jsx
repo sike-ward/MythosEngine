@@ -15,6 +15,10 @@ export default function PermissionsPanel({
   const [subjectId, setSubjectId] = useState('');
   const [role, setRole] = useState('read');
   const gmOnly = selectedNote?.meta?.gm_only === 'true' || selectedNote?.meta?.gm_only === true;
+  const getDisplayName = (entityId) =>
+    users.find((user) => user.id === entityId)?.username ||
+    groups.find((group) => group.id === entityId)?.name ||
+    entityId;
 
   return (
     <>
@@ -54,9 +58,7 @@ export default function PermissionsPanel({
           <div className="space-y-1">
             {Object.entries(selectedNote.permissions).map(([entityId, entityRole]) => (
               <div key={entityId} className="flex justify-between text-xs">
-                <span className="text-txt truncate">
-                  {users.find((user) => user.id === entityId)?.username || groups.find((group) => group.id === entityId)?.name || entityId}
-                </span>
+                <span className="text-txt truncate">{getDisplayName(entityId)}</span>
                 <Badge label={entityRole} variant={entityRole === 'admin' ? 'admin' : 'player'} />
               </div>
             ))}

@@ -37,6 +37,11 @@ export default function NoteEditor({
   const textareaRef = useRef(null);
   // Deferred cursor position after React re-renders the textarea value
   const [pendingCursor, setPendingCursor] = useState(null);
+  const editingText = editingPresence
+    ? `${editingPresence.username} is editing this note${
+        editingPresence.cursor != null ? ` (cursor ${editingPresence.cursor})` : ''
+      }.`
+    : null;
 
   useEffect(() => {
     if (pendingCursor !== null && textareaRef.current) {
@@ -127,9 +132,9 @@ export default function NoteEditor({
       </div>
 
       {/* Move dialog */}
-      {editingPresence && (
+      {editingText && (
         <div className="px-4 py-2 bg-warning/10 border-b border-txt-muted/10 text-xs text-txt">
-          {editingPresence.username} is editing this note{editingPresence.cursor != null ? ` (cursor ${editingPresence.cursor})` : ''}.
+          {editingText}
         </div>
       )}
 

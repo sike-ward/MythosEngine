@@ -19,6 +19,7 @@ class GroupResponse(BaseModel):
     description: Optional[str] = None
     owner_id: str
     members: List[str] = []
+    # Maps user IDs to their role names within the group (player/gm/admin/etc.).
     member_roles: dict[str, str] = {}
     vault_ids: List[str] = []
     is_active: bool
