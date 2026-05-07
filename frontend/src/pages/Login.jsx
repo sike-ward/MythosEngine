@@ -1,12 +1,9 @@
 import { useState, useEffect } from 'react';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import Card from '@/components/Card';
 import Button from '@/components/Button';
 import Input from '@/components/Input';
 import { auth, setToken, isRateLimitError, RATE_LIMIT_MSG } from '@/api';
-import { loginSchema, registerSchema } from '@/schemas/auth';
 
 // Must mirror server-side validate_password_strength rules (Item 54)
 const SPECIAL_CHARS = /[!@#$%^&*\-_]/;
@@ -24,11 +21,17 @@ export default function Login({ onLogin, needsSetup = false }) {
   const [apiError, setApiError] = useState('');
   const [firstRunNotice, setFirstRunNotice] = useState(false);
 
-  // Validate only on submit/touch so fields don't show errors on mount
-  const loginForm = useForm({ resolver: zodResolver(loginSchema), mode: 'onSubmit' });
-  const registerForm = useForm({ resolver: zodResolver(registerSchema), mode: 'onSubmit' });
+  // Login form state
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
 
-  // Setup form (first-run admin) — simple controlled state
+  // Register form state
+  const [regInviteCode, setRegInviteCode] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [regDisplayName, setRegDisplayName] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+
+  // Setup form state
   const [setupEmail, setSetupEmail] = useState('');
   const [setupUsername, setSetupUsername] = useState('');
   const [setupPassword, setSetupPassword] = useState('');
@@ -45,11 +48,14 @@ export default function Login({ onLogin, needsSetup = false }) {
   const switchMode = (next) => {
     setMode(next);
     setApiError('');
-    loginForm.clearErrors();
-    registerForm.clearErrors();
   };
 
-  const handleLogin = loginForm.handleSubmit(async ({ email, password }) => {
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    if (!email || !password) {
+      toast.error('Please enter your email and password');
+      return;
+    }
     setLoading(true);
     try {
       const data = await auth.login(email, password);
@@ -64,23 +70,26 @@ export default function Login({ onLogin, needsSetup = false }) {
     } finally {
       setLoading(false);
     }
-  });
+  };
 
-  const handleRegister = registerForm.handleSubmit(
-    async ({ email, password, displayName, inviteCode }) => {
-      setApiError('');
-      setLoading(true);
-      try {
-        const data = await auth.register(email, displayName, password, inviteCode);
-        setToken(data.token);
-        onLogin(data.token, data.user);
-      } catch (err) {
-        setApiError(err.message || 'Registration failed');
-      } finally {
-        setLoading(false);
-      }
+  const handleRegister = async (e) => {
+    e.preventDefault();
+    setApiError('');
+    if (!regInviteCode || !regEmail || !regDisplayName || !regPassword) {
+      setApiError('All fields are required');
+      return;
     }
-  );
+    setLoading(true);
+    try {
+      const data = await auth.register(regEmail, regDisplayName, regPassword, regInviteCode);
+      setToken(data.token);
+      onLogin(data.token, data.user);
+    } catch (err) {
+      setApiError(err.message || 'Registration failed');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSetup = async (e) => {
     e.preventDefault();
@@ -102,9 +111,6 @@ export default function Login({ onLogin, needsSetup = false }) {
       setLoading(false);
     }
   };
-
-  const FieldError = ({ message }) =>
-    message ? <p className="text-danger text-xs mt-1">{message}</p> : null;
 
   const ApiErrorBox = ({ msg }) =>
     msg ? (
@@ -196,24 +202,20 @@ export default function Login({ onLogin, needsSetup = false }) {
               </div>
             )}
             <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <Input
-                  label="Email"
-                  type="email"
-                  placeholder="you@example.com"
-                  {...loginForm.register('email')}
-                />
-                <FieldError message={loginForm.formState.errors.email?.message} />
-              </div>
-              <div>
-                <Input
-                  label="Password"
-                  type="password"
-                  placeholder="••••••••"
-                  {...loginForm.register('password')}
-                />
-                <FieldError message={loginForm.formState.errors.password?.message} />
-              </div>
+              <Input
+                label="Email"
+                type="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+              <Input
+                label="Password"
+                type="password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
               <Button type="submit" variant="primary" className="w-full" disabled={loading}>
                 {loading ? 'Signing in...' : 'Sign In'}
               </Button>
@@ -236,22 +238,34 @@ export default function Login({ onLogin, needsSetup = false }) {
             <p className="text-txt-secondary text-sm mb-6">Join the worlds of MythosEngine</p>
             <ApiErrorBox msg={apiError} />
             <form onSubmit={handleRegister} className="space-y-4">
-              <div>
-                <Input label="Invite Code" type="text" placeholder="XXXX-XXXX-XXXX" {...registerForm.register('inviteCode')} />
-                <FieldError message={registerForm.formState.errors.inviteCode?.message} />
-              </div>
-              <div>
-                <Input label="Email" type="email" placeholder="you@example.com" {...registerForm.register('email')} />
-                <FieldError message={registerForm.formState.errors.email?.message} />
-              </div>
-              <div>
-                <Input label="Display Name" type="text" placeholder="your_username" {...registerForm.register('displayName')} />
-                <FieldError message={registerForm.formState.errors.displayName?.message} />
-              </div>
-              <div>
-                <Input label="Password" type="password" placeholder="••••••••" {...registerForm.register('password')} />
-                <FieldError message={registerForm.formState.errors.password?.message} />
-              </div>
+              <Input
+                label="Invite Code"
+                type="text"
+                placeholder="XXXX-XXXX-XXXX"
+                value={regInviteCode}
+                onChange={(e) => setRegInviteCode(e.target.value)}
+              />
+              <Input
+                label="Email"
+                type="email"
+                placeholder="you@example.com"
+                value={regEmail}
+                onChange={(e) => setRegEmail(e.target.value)}
+              />
+              <Input
+                label="Display Name"
+                type="text"
+                placeholder="your_username"
+                value={regDisplayName}
+                onChange={(e) => setRegDisplayName(e.target.value)}
+              />
+              <Input
+                label="Password"
+                type="password"
+                placeholder="••••••••"
+                value={regPassword}
+                onChange={(e) => setRegPassword(e.target.value)}
+              />
               <Button type="submit" variant="primary" className="w-full" disabled={loading}>
                 {loading ? 'Creating account...' : 'Register'}
               </Button>
