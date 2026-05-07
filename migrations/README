@@ -1,0 +1,37 @@
+MythosEngine — Alembic Database Migrations
+==========================================
+
+Quick start
+-----------
+Install Alembic (already in requirements.txt):
+    pip install alembic
+
+Apply all pending migrations (run from the project root):
+    alembic upgrade head
+
+Roll back one migration:
+    alembic downgrade -1
+
+Check current revision:
+    alembic current
+
+Show full history:
+    alembic history --verbose
+
+Generate a new migration after changing ORM models:
+    alembic revision --autogenerate -m "describe your change"
+    # Review the generated file in migrations/versions/ before applying.
+
+Custom database path
+--------------------
+Override the default (sqlite:///mythos_engine.db) via environment variable:
+    DATABASE_URL=sqlite:////absolute/path/to/mythos_engine.db alembic upgrade head
+
+Existing databases
+------------------
+If you already have a mythos_engine.db created by Base.metadata.create_all(),
+stamp it as being at the initial revision without re-running the migration:
+    alembic stamp 0001
+
+After that, future `alembic revision --autogenerate` runs will only diff
+against schema changes made after the initial migration.
