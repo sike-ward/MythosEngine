@@ -3,6 +3,7 @@ import {
   Home,
   Sparkles,
   BookOpen,
+  Scroll,
   Wand2,
   Globe,
   Settings,
@@ -15,6 +16,7 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user }) => {
     { icon: Sparkles, label: 'AI', path: '/chat' },
     { icon: BookOpen, label: 'Browse', path: '/browse' },
     { icon: Wand2, label: 'Create', path: '/create' },
+    { icon: Scroll, label: 'Sessions', path: '/sessions' },
     { icon: Globe, label: 'Universe', path: '/universe' },
   ];
 

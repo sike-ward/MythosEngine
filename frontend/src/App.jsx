@@ -6,6 +6,7 @@ import Dashboard from "./pages/Dashboard";
 import Chat from "./pages/Chat";
 import Browse from "./pages/Browse";
 import Create from "./pages/Create";
+import Sessions from "./pages/Sessions";
 import Universe from "./pages/Universe";
 import Settings from "./pages/Settings";
 import Login from "./pages/Login";
@@ -138,6 +139,7 @@ export default function App() {
             <Route path="/chat" element={<Chat />} />
             <Route path="/browse" element={<Browse user={user} />} />
             <Route path="/create" element={<Create />} />
+            <Route path="/sessions" element={<Sessions user={user} />} />
             <Route path="/universe" element={<Universe />} />
             <Route path="/settings" element={<Settings user={user} />} />
             <Route path="*" element={<NotFound />} />
