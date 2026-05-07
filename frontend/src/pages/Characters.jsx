@@ -1,0 +1,505 @@
+import { useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { Users, Plus, Search, Trash2, Save, X } from 'lucide-react';
+import { characters as charsApi, notes as notesApi } from '@/api';
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const STAT_NAMES = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'];
+const DEFAULT_STATS = { STR: 10, DEX: 10, CON: 10, INT: 10, WIS: 10, CHA: 10 };
+const EMPTY_FORM = {
+  name: '',
+  char_type: 'npc',
+  race: '',
+  char_class: '',
+  level: 1,
+  stats: { ...DEFAULT_STATS },
+  backstory: '',
+  ai_memory: '',
+  note_ids: [],
+  vault_id: 'default',
+};
+
+function statModifier(value) {
+  const mod = Math.floor((value - 10) / 2);
+  return mod >= 0 ? `+${mod}` : `${mod}`;
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function CharCard({ char, isSelected, onClick }) {
+  const subtitle = [char.race, char.char_class].filter(Boolean).join(' · ');
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full text-left rounded-xl px-4 py-3 border transition-all ${
+        isSelected
+          ? 'border-accent bg-accent-soft'
+          : 'border-border-subtle bg-surface hover:border-border'
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-semibold text-txt truncate">{char.name}</span>
+        <span
+          className={`flex-shrink-0 text-xs px-2 py-0.5 rounded-full font-medium ${
+            char.char_type === 'player'
+              ? 'bg-accent-soft text-accent'
+              : 'bg-surface-raised text-txt-muted'
+          }`}
+        >
+          {char.char_type === 'player' ? 'PC' : 'NPC'}
+        </span>
+      </div>
+      {(subtitle || char.level > 1) && (
+        <div className="text-xs text-txt-muted mt-0.5 truncate">
+          {subtitle}
+          {char.level > 1 ? ` · Lv ${char.level}` : ''}
+        </div>
+      )}
+    </button>
+  );
+}
+
+function StatBlock({ stats, onChange }) {
+  return (
+    <div className="grid grid-cols-6 gap-2">
+      {STAT_NAMES.map((stat) => {
+        const val = Number(stats?.[stat] ?? 10);
+        return (
+          <div
+            key={stat}
+            className="flex flex-col items-center border border-border-subtle rounded-lg py-2 px-1 bg-surface"
+          >
+            <span className="text-[10px] font-bold text-txt-muted uppercase tracking-wider">
+              {stat}
+            </span>
+            <input
+              type="number"
+              min={1}
+              max={30}
+              value={val}
+              onChange={(e) => onChange(stat, Number(e.target.value))}
+              className="w-full text-center text-base font-bold bg-transparent text-txt border-none outline-none mt-0.5"
+            />
+            <span className="text-xs text-txt-muted font-medium">{statModifier(val)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function FieldLabel({ children }) {
+  return (
+    <label className="text-xs font-semibold text-txt-muted uppercase tracking-wider mb-1 block">
+      {children}
+    </label>
+  );
+}
+
+function TextInput({ value, onChange, placeholder, className = '' }) {
+  return (
+    <input
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className={`w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-txt text-sm focus:outline-none focus:border-accent ${className}`}
+    />
+  );
+}
+
+// ─── Main page ────────────────────────────────────────────────────────────────
+
+export default function Characters() {
+  const qc = useQueryClient();
+
+  const [filter, setFilter] = useState('all');
+  const [search, setSearch] = useState('');
+  const [selectedId, setSelectedId] = useState(null);
+  const [isCreating, setIsCreating] = useState(false);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [dirty, setDirty] = useState(false);
+
+  // ── Data queries ────────────────────────────────────────────────────────────
+
+  const { data: listData, isLoading } = useQuery({
+    queryKey: ['characters', filter],
+    queryFn: () => charsApi.list('default', filter === 'all' ? null : filter),
+  });
+  const allChars = listData?.items ?? [];
+
+  const { data: notesData } = useQuery({
+    queryKey: ['notes'],
+    queryFn: () => notesApi.list(),
+  });
+  const allNotes = notesData?.items ?? [];
+
+  const { data: selectedChar } = useQuery({
+    queryKey: ['character', selectedId],
+    queryFn: () => charsApi.get(selectedId),
+    enabled: !!selectedId && !isCreating,
+  });
+
+  // Populate form when a character is selected
+  useEffect(() => {
+    if (selectedChar && !isCreating) {
+      setForm({
+        name: selectedChar.name ?? '',
+        char_type: selectedChar.char_type ?? 'npc',
+        race: selectedChar.race ?? '',
+        char_class: selectedChar.char_class ?? '',
+        level: selectedChar.level ?? 1,
+        stats: { ...DEFAULT_STATS, ...(selectedChar.stats ?? {}) },
+        backstory: selectedChar.backstory ?? '',
+        ai_memory: selectedChar.ai_memory ?? '',
+        note_ids: selectedChar.note_ids ?? [],
+        vault_id: selectedChar.vault_id ?? 'default',
+      });
+      setDirty(false);
+    }
+  }, [selectedChar, isCreating]);
+
+  // ── Mutations ───────────────────────────────────────────────────────────────
+
+  const createMut = useMutation({
+    mutationFn: (data) => charsApi.create(data),
+    onSuccess: (char) => {
+      qc.invalidateQueries({ queryKey: ['characters'] });
+      setIsCreating(false);
+      setSelectedId(char.id);
+      setDirty(false);
+      toast.success('Character created');
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const updateMut = useMutation({
+    mutationFn: (data) => charsApi.update(selectedId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['characters'] });
+      qc.invalidateQueries({ queryKey: ['character', selectedId] });
+      setDirty(false);
+      toast.success('Saved');
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: () => charsApi.delete(selectedId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['characters'] });
+      setSelectedId(null);
+      setIsCreating(false);
+      toast.success('Character deleted');
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // ── Handlers ────────────────────────────────────────────────────────────────
+
+  const setField = (key, val) => {
+    setForm((f) => ({ ...f, [key]: val }));
+    setDirty(true);
+  };
+
+  const setStat = (stat, val) => {
+    setForm((f) => ({ ...f, stats: { ...f.stats, [stat]: val } }));
+    setDirty(true);
+  };
+
+  const handleNewChar = () => {
+    setIsCreating(true);
+    setSelectedId(null);
+    setForm({ ...EMPTY_FORM, stats: { ...DEFAULT_STATS } });
+    setDirty(false);
+  };
+
+  const handleSelectChar = (id) => {
+    setSelectedId(id);
+    setIsCreating(false);
+    setDirty(false);
+  };
+
+  const handleSave = () => {
+    if (isCreating) createMut.mutate(form);
+    else updateMut.mutate(form);
+  };
+
+  const addNote = (noteId) => {
+    if (noteId && !form.note_ids.includes(noteId)) {
+      setField('note_ids', [...form.note_ids, noteId]);
+    }
+  };
+
+  const removeNote = (noteId) => {
+    setField('note_ids', form.note_ids.filter((id) => id !== noteId));
+  };
+
+  const filtered = allChars.filter(
+    (c) => !search || c.name.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const isBusy = createMut.isPending || updateMut.isPending;
+  const showEditor = isCreating || !!selectedId;
+
+  // ── Render ──────────────────────────────────────────────────────────────────
+
+  return (
+    <div className="h-full flex overflow-hidden">
+      {/* ── Left panel ────────────────────────────────────────────── */}
+      <div className="w-[300px] border-r border-border-subtle flex flex-col h-full bg-surface flex-shrink-0">
+        {/* Header */}
+        <div className="px-4 pt-5 pb-3 border-b border-border-subtle">
+          <div className="flex items-center justify-between mb-3">
+            <h1 className="text-lg font-bold text-txt flex items-center gap-2">
+              <Users size={20} />
+              Characters
+            </h1>
+            <button
+              onClick={handleNewChar}
+              className="flex items-center gap-1 text-sm bg-accent text-white rounded-lg px-3 py-1.5 hover:bg-accent/90 transition-colors"
+            >
+              <Plus size={14} />
+              New
+            </button>
+          </div>
+
+          {/* Search */}
+          <div className="relative mb-2">
+            <Search
+              size={14}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-txt-muted pointer-events-none"
+            />
+            <input
+              type="text"
+              placeholder="Search characters..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-8 pr-3 py-1.5 text-sm bg-base border border-border-subtle rounded-lg text-txt placeholder:text-txt-muted focus:outline-none focus:border-accent"
+            />
+          </div>
+
+          {/* Filter tabs */}
+          <div className="flex gap-1">
+            {[
+              { key: 'all', label: 'All' },
+              { key: 'player', label: 'Players' },
+              { key: 'npc', label: 'NPCs' },
+            ].map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => setFilter(key)}
+                className={`flex-1 text-xs py-1.5 rounded-md font-medium transition-colors ${
+                  filter === key
+                    ? 'bg-accent text-white'
+                    : 'bg-base text-txt-muted hover:text-txt'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Character list */}
+        <div className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-2">
+          {isLoading ? (
+            <p className="text-txt-muted text-sm text-center py-6">Loading...</p>
+          ) : filtered.length === 0 ? (
+            <p className="text-txt-muted text-sm text-center py-6">
+              {search ? 'No characters match your search.' : 'No characters yet.'}
+            </p>
+          ) : (
+            filtered.map((c) => (
+              <CharCard
+                key={c.id}
+                char={c}
+                isSelected={c.id === selectedId}
+                onClick={() => handleSelectChar(c.id)}
+              />
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* ── Right panel ───────────────────────────────────────────── */}
+      <div className="flex-1 overflow-y-auto">
+        {!showEditor ? (
+          <div className="h-full flex flex-col items-center justify-center gap-3 text-txt-muted">
+            <Users size={52} className="opacity-20" />
+            <p className="text-sm">Select a character or click New to get started.</p>
+          </div>
+        ) : (
+          <div className="max-w-2xl mx-auto px-6 py-6 space-y-6">
+            {/* ── Title + action buttons ─────────────────────────── */}
+            <div className="flex items-center justify-between gap-4">
+              <h2 className="text-xl font-bold text-txt truncate">
+                {isCreating ? 'New Character' : (form.name || 'Unnamed')}
+              </h2>
+              <div className="flex gap-2 flex-shrink-0">
+                <button
+                  onClick={handleSave}
+                  disabled={isBusy}
+                  className="flex items-center gap-1.5 bg-accent text-white text-sm px-4 py-2 rounded-lg hover:bg-accent/90 disabled:opacity-50 transition-colors"
+                >
+                  <Save size={14} />
+                  {isBusy ? 'Saving…' : 'Save'}
+                </button>
+                {!isCreating && (
+                  <button
+                    onClick={() => deleteMut.mutate()}
+                    disabled={deleteMut.isPending}
+                    className="flex items-center gap-1.5 bg-red-500/10 text-red-400 text-sm px-4 py-2 rounded-lg hover:bg-red-500/20 disabled:opacity-50 transition-colors"
+                  >
+                    <Trash2 size={14} />
+                    Delete
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* ── Identity fields ────────────────────────────────── */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="col-span-2">
+                <FieldLabel>Name</FieldLabel>
+                <TextInput
+                  value={form.name}
+                  onChange={(v) => setField('name', v)}
+                  placeholder="Character name"
+                />
+              </div>
+
+              <div>
+                <FieldLabel>Type</FieldLabel>
+                <select
+                  value={form.char_type}
+                  onChange={(e) => setField('char_type', e.target.value)}
+                  className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-txt text-sm focus:outline-none focus:border-accent"
+                >
+                  <option value="player">Player Character</option>
+                  <option value="npc">NPC</option>
+                </select>
+              </div>
+
+              <div>
+                <FieldLabel>Level</FieldLabel>
+                <input
+                  type="number"
+                  min={1}
+                  max={30}
+                  value={form.level}
+                  onChange={(e) => setField('level', Number(e.target.value))}
+                  className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-txt text-sm focus:outline-none focus:border-accent"
+                />
+              </div>
+
+              <div>
+                <FieldLabel>Race</FieldLabel>
+                <TextInput
+                  value={form.race}
+                  onChange={(v) => setField('race', v)}
+                  placeholder="e.g. Human, Elf, Dwarf…"
+                />
+              </div>
+
+              <div>
+                <FieldLabel>Class</FieldLabel>
+                <TextInput
+                  value={form.char_class}
+                  onChange={(v) => setField('char_class', v)}
+                  placeholder="e.g. Fighter, Wizard…"
+                />
+              </div>
+            </div>
+
+            {/* ── D&D Stat block ─────────────────────────────────── */}
+            <div>
+              <FieldLabel>Ability Scores</FieldLabel>
+              <StatBlock stats={form.stats} onChange={setStat} />
+            </div>
+
+            {/* ── Backstory ──────────────────────────────────────── */}
+            <div>
+              <FieldLabel>Backstory</FieldLabel>
+              <textarea
+                value={form.backstory}
+                onChange={(e) => setField('backstory', e.target.value)}
+                placeholder="Character history, background, motivations…"
+                rows={4}
+                className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-txt text-sm focus:outline-none focus:border-accent resize-none"
+              />
+            </div>
+
+            {/* ── AI Memory ──────────────────────────────────────── */}
+            <div>
+              <FieldLabel>AI Memory</FieldLabel>
+              <p className="text-xs text-txt-muted mb-1.5">
+                Notes the AI can reference about this character
+              </p>
+              <textarea
+                value={form.ai_memory}
+                onChange={(e) => setField('ai_memory', e.target.value)}
+                placeholder="Key facts, personality traits, recent events, secrets…"
+                rows={4}
+                className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-txt text-sm focus:outline-none focus:border-accent resize-none"
+              />
+            </div>
+
+            {/* ── Attached notes ─────────────────────────────────── */}
+            <div>
+              <FieldLabel>Attached Notes</FieldLabel>
+
+              {form.note_ids.length > 0 ? (
+                <ul className="space-y-1 mb-3">
+                  {form.note_ids.map((noteId) => {
+                    const note = allNotes.find((n) => n.id === noteId);
+                    return (
+                      <li
+                        key={noteId}
+                        className="flex items-center justify-between bg-surface border border-border-subtle rounded-lg px-3 py-2 text-sm"
+                      >
+                        <span className="text-txt truncate">{note?.title ?? noteId}</span>
+                        <button
+                          onClick={() => removeNote(noteId)}
+                          className="ml-2 flex-shrink-0 text-txt-muted hover:text-red-400 transition-colors"
+                          title="Remove"
+                        >
+                          <X size={14} />
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className="text-xs text-txt-muted mb-2">No notes attached.</p>
+              )}
+
+              <select
+                defaultValue=""
+                onChange={(e) => {
+                  addNote(e.target.value);
+                  e.target.value = '';
+                }}
+                className="w-full bg-surface border border-border-subtle rounded-lg px-3 py-2 text-txt text-sm focus:outline-none focus:border-accent"
+              >
+                <option value="">Attach a note…</option>
+                {allNotes
+                  .filter((n) => !form.note_ids.includes(n.id))
+                  .map((n) => (
+                    <option key={n.id} value={n.id}>
+                      {n.title}
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            {dirty && (
+              <p className="text-xs text-txt-muted text-right">Unsaved changes</p>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

@@ -5,6 +5,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import Dashboard from "./pages/Dashboard";
 import Chat from "./pages/Chat";
 import Browse from "./pages/Browse";
+import Characters from "./pages/Characters";
 import Create from "./pages/Create";
 import Universe from "./pages/Universe";
 import Settings from "./pages/Settings";
@@ -137,6 +138,7 @@ export default function App() {
             <Route path="/" element={<Dashboard user={user} />} />
             <Route path="/chat" element={<Chat />} />
             <Route path="/browse" element={<Browse user={user} />} />
+            <Route path="/characters" element={<Characters />} />
             <Route path="/create" element={<Create />} />
             <Route path="/universe" element={<Universe />} />
             <Route path="/settings" element={<Settings user={user} />} />
