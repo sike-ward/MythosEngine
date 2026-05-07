@@ -7,6 +7,16 @@ import Input from '@/components/Input';
 import { auth, setToken } from '@/api';
 import { loginSchema, registerSchema } from '@/schemas/auth';
 
+// Must mirror server-side validate_password_strength rules (Item 54)
+const SPECIAL_CHARS = /[!@#$%^&*\-_]/;
+function validatePassword(pw) {
+  if (pw.length < 8) return 'At least 8 characters required';
+  if (!/[A-Z]/.test(pw)) return 'At least 1 uppercase letter required';
+  if (!/[0-9]/.test(pw)) return 'At least 1 number required';
+  if (!SPECIAL_CHARS.test(pw)) return 'At least 1 special character required (!@#$%^&*-_)';
+  return null;
+}
+
 export default function Login({ onLogin, needsSetup = false }) {
   const [mode, setMode] = useState(needsSetup ? 'setup' : 'login');
   const [loading, setLoading] = useState(false);
@@ -17,10 +27,11 @@ export default function Login({ onLogin, needsSetup = false }) {
   // Register form with Zod validation
   const registerForm = useForm({ resolver: zodResolver(registerSchema) });
 
-  // Setup form (simple — first-run admin)
+  // Setup form (first-run admin) — simple controlled state
   const [setupEmail, setSetupEmail] = useState('');
   const [setupUsername, setSetupUsername] = useState('');
   const [setupPassword, setSetupPassword] = useState('');
+  const [setupPwHint, setSetupPwHint] = useState(null);
   const [setupConfirm, setSetupConfirm] = useState('');
   const [setupError, setSetupError] = useState('');
 
@@ -37,7 +48,7 @@ export default function Login({ onLogin, needsSetup = false }) {
     try {
       const data = await auth.login(email, password);
       setToken(data.token);
-      onLogin(data.token, data.user);
+      onLogin(data.token, data.user, data.exp ?? null);
     } catch (err) {
       setApiError(err.message || 'Login failed');
     } finally {
@@ -68,15 +79,13 @@ export default function Login({ onLogin, needsSetup = false }) {
       setSetupError('Passwords do not match');
       return;
     }
-    if (setupPassword.length < 8) {
-      setSetupError('Password must be at least 8 characters');
-      return;
-    }
+    const hint = validatePassword(setupPassword);
+    if (hint) { setSetupError(hint); return; }
     setLoading(true);
     try {
       const data = await auth.setup(setupEmail, setupUsername, setupPassword);
       setToken(data.token);
-      onLogin(data.token, data.user);
+      onLogin(data.token, data.user, data.exp ?? null);
     } catch (err) {
       setSetupError(err.message || 'Setup failed');
     } finally {
@@ -110,10 +119,46 @@ export default function Login({ onLogin, needsSetup = false }) {
             <p className="text-txt-secondary text-sm mb-6">Create your admin account to get started.</p>
             <ApiErrorBox msg={setupError} />
             <form onSubmit={handleSetup} className="space-y-4">
-              <Input label="Email" type="email" placeholder="admin@example.com" value={setupEmail} onChange={(e) => setSetupEmail(e.target.value)} required />
-              <Input label="Username" type="text" placeholder="Your name" value={setupUsername} onChange={(e) => setSetupUsername(e.target.value)} required />
-              <Input label="Password" type="password" placeholder="Min 8 characters" value={setupPassword} onChange={(e) => setSetupPassword(e.target.value)} required />
-              <Input label="Confirm Password" type="password" placeholder="Repeat password" value={setupConfirm} onChange={(e) => setSetupConfirm(e.target.value)} required />
+              <Input
+                label="Email"
+                type="email"
+                placeholder="admin@example.com"
+                value={setupEmail}
+                onChange={(e) => setSetupEmail(e.target.value)}
+                required
+              />
+              <Input
+                label="Username"
+                type="text"
+                placeholder="Your name"
+                value={setupUsername}
+                onChange={(e) => setSetupUsername(e.target.value)}
+                required
+              />
+              <div>
+                <Input
+                  label="Password"
+                  type="password"
+                  placeholder="Min 8 chars, uppercase, number, special"
+                  value={setupPassword}
+                  onChange={(e) => {
+                    setSetupPassword(e.target.value);
+                    setSetupPwHint(e.target.value ? validatePassword(e.target.value) : null);
+                  }}
+                  required
+                />
+                {setupPwHint && (
+                  <p className="text-danger text-xs mt-1">{setupPwHint}</p>
+                )}
+              </div>
+              <Input
+                label="Confirm Password"
+                type="password"
+                placeholder="Repeat password"
+                value={setupConfirm}
+                onChange={(e) => setSetupConfirm(e.target.value)}
+                required
+              />
               <Button type="submit" variant="primary" className="w-full" disabled={loading}>
                 {loading ? 'Creating account...' : 'Create Admin Account'}
               </Button>

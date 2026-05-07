@@ -14,12 +14,15 @@ The Electron ``main.cjs`` starts this automatically in production.
 
 import logging
 import sys
+import threading
 import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -45,6 +48,7 @@ from MythosEngine.context.app_context import AppContext
 from server.dependencies import set_app_context
 from server.routes import ai, auth, dashboard, debug, invites, notes, settings, users
 
+from server.limiter import limiter
 from server.middleware.logging import LoggingMiddleware
 logger = logging.getLogger(__name__)
 
@@ -80,10 +84,24 @@ async def lifespan(application: FastAPI):
             from MythosEngine.ai.core.model_router import get_model_backend
 
             ctx.ai = get_model_backend(cfg, storage=ctx.storage)
+            ctx.ai._index_ready = False
             logger.info("AI engine initialised.")
         except Exception as exc:
             logger.warning("AI engine failed to initialise: %s", exc)
 
+    # Build the AI vector index in a background thread so startup is non-blocking.
+    if ctx.has_ai():
+        def _build_index_bg() -> None:
+            try:
+                ctx.ai.index_manager.build_index()
+                ctx.ai._index_ready = True
+                logger.info("AI index build complete")
+            except Exception as exc:
+                logger.warning("AI index build failed: %s", exc)
+
+        threading.Thread(target=_build_index_bg, daemon=True).start()
+
+    application.state.ctx = ctx
     set_app_context(ctx)
     logger.info("MythosEngine server ready. Vault: %s", getattr(cfg, "VAULT_PATH", "?"))
     yield
@@ -98,6 +116,10 @@ app = FastAPI(
     description="REST API for the MythosEngine D&D campaign management platform.",
     lifespan=lifespan,
 )
+
+# Rate-limiting (slowapi)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(LoggingMiddleware)
 

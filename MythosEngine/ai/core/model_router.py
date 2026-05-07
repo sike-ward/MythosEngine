@@ -26,6 +26,9 @@ class ModelRouter(AIInterface):
         self._config = config
         self._storage = storage  # shared instance from AppContext — never recreated
 
+        # Set True by the background thread in server/app.py once build_index completes
+        self._index_ready: bool = False
+
         self._backends = {task: self._init_backend(task) for task in self.TASKS}
 
         # Build IndexManager once at startup, reused across all calls
@@ -39,6 +42,11 @@ class ModelRouter(AIInterface):
         loreai_backend = self._backends.get("search_context")
         if loreai_backend and hasattr(loreai_backend, "set_index_manager"):
             loreai_backend.set_index_manager(self._index_manager)
+
+    @property
+    def index_manager(self) -> IndexManager:
+        """Public accessor for the shared IndexManager."""
+        return self._index_manager
 
     def _init_backend(self, task: str) -> AIInterface:
         key = f"AI_{task.upper()}_BACKEND"

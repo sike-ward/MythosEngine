@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Set
 
-from sqlalchemy import String, Text, create_engine, select
+from sqlalchemy import Boolean, DateTime, Index, String, Text, create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from MythosEngine.core.event_bus import get_event_bus
@@ -60,8 +60,10 @@ class UserRecord(Base):
     """ORM model for User data — stored as JSON blob."""
 
     __tablename__ = "users"
+    __table_args__ = (Index("ix_users_email", "email", unique=True),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    email: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, default="")
     data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
 
 
@@ -101,11 +103,21 @@ class NoteRecord(Base):
     """ORM model for Note metadata — content stored as file."""
 
     __tablename__ = "notes"
+    __table_args__ = (
+        Index("ix_notes_created_at", "created_at"),
+        Index("ix_notes_owner_id", "owner_id"),
+        Index("ix_notes_vault_id", "vault_id"),
+        Index("ix_notes_is_deleted", "is_deleted"),
+        Index("ix_notes_folder", "folder"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     owner_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
     vault_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
     data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob (metadata only)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    folder: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, default="")
 
 
 class CharacterRecord(Base):
@@ -274,12 +286,14 @@ class SQLiteBackend(StorageBackend):
 
     def save_user(self, user: User) -> None:
         """Save or update a User record."""
+        email = getattr(user, "email", "") or ""
         with self._session() as session:
             record = session.query(UserRecord).filter(UserRecord.id == user.id).first()
             if record:
+                record.email = email
                 record.data = user.model_dump_json()
             else:
-                record = UserRecord(id=user.id, data=user.model_dump_json())
+                record = UserRecord(id=user.id, email=email, data=user.model_dump_json())
                 session.add(record)
             session.commit()
 
@@ -292,11 +306,14 @@ class SQLiteBackend(StorageBackend):
         return None
 
     def get_user_by_email(self, email: str) -> Optional[User]:
-        """Retrieve a User by email address."""
+        """Retrieve a User by email address (uses indexed email column)."""
         with self._session() as session:
-            records = session.query(UserRecord).all()
-            for record in records:
-                user = User.model_validate_json(record.data)
+            record = session.query(UserRecord).filter(UserRecord.email == email).first()
+            if record:
+                return User.model_validate_json(record.data)
+            # Fallback: scan JSON blobs for rows written before the email column existed
+            for rec in session.query(UserRecord).filter(UserRecord.email == None).all():
+                user = User.model_validate_json(rec.data)
                 if user.email == email:
                     return user
         return None
@@ -465,16 +482,28 @@ class SQLiteBackend(StorageBackend):
             abs_path.parent.mkdir(parents=True, exist_ok=True)
             abs_path.write_text(note.content, encoding="utf-8")
 
-        # Store metadata in database
+        # Store metadata in database (sync denormalized columns for indexing)
+        _created_at = getattr(note, "created_at", None)
+        _is_deleted = getattr(note, "is_deleted", False)
+        _folder = getattr(note, "folder_id", "") or ""
         with self._session() as session:
             record = session.query(NoteRecord).filter(NoteRecord.id == note.id).first()
             if record:
                 record.owner_id = note.owner_id
                 record.vault_id = note.vault_id
                 record.data = note.model_dump_json()
+                record.created_at = _created_at
+                record.is_deleted = _is_deleted
+                record.folder = _folder
             else:
                 record = NoteRecord(
-                    id=note.id, owner_id=note.owner_id, vault_id=note.vault_id, data=note.model_dump_json()
+                    id=note.id,
+                    owner_id=note.owner_id,
+                    vault_id=note.vault_id,
+                    data=note.model_dump_json(),
+                    created_at=_created_at,
+                    is_deleted=_is_deleted,
+                    folder=_folder,
                 )
                 session.add(record)
             session.commit()
@@ -524,20 +553,21 @@ class SQLiteBackend(StorageBackend):
                 record.data = note.model_dump_json()
                 session.commit()
 
-    def list_notes(self, folder: str = "") -> List[str]:
+    def list_notes(self, folder: str = "", skip: int = 0, limit: int = 0) -> List[str]:
         """List note file paths the current user can access.
 
         Admins see all notes. Regular users see notes they own
-        or notes explicitly shared with them.
+        or notes explicitly shared with them. Soft-deleted notes are excluded.
         """
-        # Collect accessible note IDs from the DB
+        # Collect accessible note IDs from the DB, excluding soft-deleted
         accessible_ids: set[str] = set()
         with self._session() as session:
+            base_q = session.query(NoteRecord).filter(NoteRecord.is_deleted != True)
             if self._is_admin or self._is_gm:
-                records = session.query(NoteRecord).all()
+                records = base_q.all()
             else:
                 uid = self._current_user_id or ""
-                records = session.query(NoteRecord).filter((NoteRecord.owner_id == uid)).all()
+                records = base_q.filter(NoteRecord.owner_id == uid).all()
             for rec in records:
                 note_data = json.loads(rec.data or "{}")
                 perms = note_data.get("permissions", {})
@@ -549,9 +579,13 @@ class SQLiteBackend(StorageBackend):
             return []
         all_paths = [str(p.relative_to(self.vault_path)) for p in root.rglob("*.md") if p.is_file()]
         if self._is_admin or self._is_gm or not self._current_user_id:
-            return all_paths
-        # Return only paths that have a DB record the user can access
-        return [p for p in all_paths if p in accessible_ids or p.replace("\\", "/") in accessible_ids]
+            result = all_paths
+        else:
+            # Return only paths that have a DB record the user can access
+            result = [p for p in all_paths if p in accessible_ids or p.replace("\\", "/") in accessible_ids]
+        if limit > 0:
+            result = result[skip : skip + limit]
+        return result
 
     def read_note(self, path: str) -> str:
         """Read note content from markdown file."""
@@ -861,23 +895,38 @@ class SQLiteBackend(StorageBackend):
         query: str,
         vault_id: str = "",
         top_k: int = 100,
+        skip: int = 0,
+        limit: int = 0,
         search_type: str = "fulltext",
     ) -> List[Note]:
         """
         Search across all markdown notes.
 
-        Parameters
-        ----------
-        search_type : str
-            ``"semantic"`` uses the vector index (sentence_transformers cosine
-            similarity) when available, falling back to fulltext automatically.
-            ``"fulltext"`` (default) does case-insensitive substring matching on
-            title and content.
+        Case-insensitive substring match on title and content. Soft-deleted
+        notes are excluded by cross-referencing the DB is_deleted column.
+        vault_id is accepted for interface compatibility but is ignored
+        (all notes in vault_path are searched).
         """
+        # Collect paths of soft-deleted notes from DB
+        deleted_paths: set[str] = set()
+        try:
+            with self._session() as session:
+                for rec in session.query(NoteRecord).filter(NoteRecord.is_deleted == True).all():
+                    note_data = json.loads(rec.data or "{}")
+                    path = note_data.get("path", "")
+                    if path:
+                        deleted_paths.add(path)
+                        deleted_paths.add(path.replace("\\", "/"))
+        except Exception:
+            pass
+
         if search_type == "semantic" and self.vector_index.is_available():
             note_paths = self.vector_index.search(query, top_k=top_k)
             results: List[Note] = []
             for rel in note_paths:
+                rel_fwd = rel.replace("\\", "/")
+                if rel in deleted_paths or rel_fwd in deleted_paths:
+                    continue
                 p = self.vault_path / rel
                 if not p.is_file():
                     continue
@@ -894,18 +943,23 @@ class SQLiteBackend(StorageBackend):
                     )
                 except Exception:
                     continue
+            if limit > 0:
+                return results[skip : skip + limit]
             return results
 
         # Fulltext: case-insensitive substring match on title and content.
         query_lower = query.lower()
-        results = []
+        results: List[Note] = []
         for p in self.vault_path.rglob("*.md"):
             if p.name.startswith("."):
                 continue
             try:
+                rel = str(p.relative_to(self.vault_path))
+                rel_fwd = rel.replace("\\", "/")
+                if rel in deleted_paths or rel_fwd in deleted_paths:
+                    continue
                 content = p.read_text(encoding="utf-8", errors="replace")
                 if query_lower in p.stem.lower() or query_lower in content.lower():
-                    rel = str(p.relative_to(self.vault_path))
                     results.append(
                         Note(
                             id=rel,
@@ -919,7 +973,21 @@ class SQLiteBackend(StorageBackend):
                         break
             except Exception:
                 continue
+
+        if limit > 0:
+            results = results[skip : skip + limit]
         return results
+
+    def count_notes(self, folder: str = "", vault_id: str = "") -> int:
+        """Return the count of non-deleted notes accessible to the current user."""
+        with self._session() as session:
+            q = session.query(NoteRecord).filter(NoteRecord.is_deleted != True)
+            if vault_id:
+                q = q.filter(NoteRecord.vault_id == vault_id)
+            if not (self._is_admin or self._is_gm):
+                uid = self._current_user_id or ""
+                q = q.filter(NoteRecord.owner_id == uid)
+            return q.count()
 
     def update_note_metadata(self, note_id: str, meta: dict) -> None:
         """

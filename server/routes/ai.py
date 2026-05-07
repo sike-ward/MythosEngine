@@ -1,26 +1,28 @@
 """
 AI endpoints.
 
-POST /ai/ask — ask the AI a question with vault context
-POST /ai/ask/stream — streaming SSE version of ask
-POST /ai/summarize — summarize text
+GET  /ai/status       — readiness check (always available, no auth required)
+POST /ai/ask          — ask the AI a question with vault context
+POST /ai/ask/stream   — streaming SSE version of ask
+POST /ai/summarize    — summarize text
 POST /ai/suggest-tags — suggest tags for text
 """
 
 import json
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
 
 from server.deps import get_ctx, get_current_user
+from server.limiter import limiter
 
 
-router = APIRouter()
+router = APIRouter(prefix="/ai", tags=["ai"])
 
 
 # ============================================================================
@@ -57,7 +59,7 @@ class SummarizeResponse(BaseModel):
 class SuggestTagsRequest(BaseModel):
     """Request body for POST /ai/suggest-tags"""
     text: str
-    existing_tags: list[str] = []
+    existing_tags: list[str] = Field(default_factory=list)
 
 
 class SuggestTagsResponse(BaseModel):
@@ -68,8 +70,17 @@ class SuggestTagsResponse(BaseModel):
 
 
 # ============================================================================
-# AI endpoints
+# Helpers
 # ============================================================================
+
+
+def require_index_ready(ctx: AppContext = Depends(get_ctx)) -> None:
+    """Raise 503 if the AI vector index is still being built."""
+    if not getattr(ctx.ai, "_index_ready", False):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI index is still building. Try again shortly.",
+        )
 
 
 def _build_prompt_with_history(prompt: str, history: Optional[list[dict]]) -> str:
@@ -84,8 +95,23 @@ def _build_prompt_with_history(prompt: str, history: Optional[list[dict]]) -> st
     return "Previous conversation:\n" + "\n".join(lines) + f"\n\nUser: {prompt}"
 
 
+# ============================================================================
+# AI endpoints
+# ============================================================================
+
+
+@router.get("/status")
+async def ai_status(ctx: AppContext = Depends(get_ctx)):
+    return {
+        "ready": ctx.has_ai(),
+        "index_built": getattr(ctx.ai, "_index_ready", False) if ctx.has_ai() else False,
+    }
+
+
 @router.post("/ask", response_model=AskResponse)
+@limiter.limit("20/minute")
 async def ask(
+    request: Request,
     req: AskRequest,
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
@@ -152,7 +178,9 @@ async def stream_ask(
 
 
 @router.post("/summarize", response_model=SummarizeResponse)
+@limiter.limit("20/minute")
 async def summarize(
+    request: Request,
     req: SummarizeRequest,
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
@@ -187,7 +215,9 @@ async def summarize(
 
 
 @router.post("/suggest-tags", response_model=SuggestTagsResponse)
+@limiter.limit("20/minute")
 async def suggest_tags(
+    request: Request,
     req: SuggestTagsRequest,
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
@@ -210,7 +240,7 @@ async def suggest_tags(
         tags, prompt_tokens, completion_tokens = ai.suggest_tags(req.text)
 
         if req.existing_tags:
-            existing_lower = set(tag.lower() for tag in req.existing_tags)
+            existing_lower = {tag.lower() for tag in req.existing_tags}
             tags = [tag for tag in tags if tag.lower() not in existing_lower]
 
         return SuggestTagsResponse(

@@ -92,8 +92,10 @@ class AppContext:
             shutil.copy2(str(_db_old), str(_db_new))
 
         # Backend is resolved via StorageRouter (respects config.VAULT_TYPE).
+        # StorageRouter proxies all StorageBackend calls to its active backend,
+        # so callers use ctx.storage exactly like a raw StorageBackend.
         # A custom backend may be injected via constructor — used in tests.
-        self.storage: StorageBackend = storage or StorageRouter(config).backend
+        self.storage: StorageBackend = storage or StorageRouter(config)
 
         # AI engine — wired up by main.py after construction.
         self.ai: Optional[AIInterface] = None
