@@ -19,11 +19,12 @@ import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, field_validator
 
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
+from MythosEngine.utils.audit_logger import audit
 
 from server.auth_utils import create_jwt
 from server.deps import get_ctx, get_current_user
@@ -32,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# Rate limiter — prevents brute-force login attempts
+# Rate limiter — prevents brute-force login attempts (Item 60)
 # ============================================================================
 
 class RateLimiter:
@@ -62,19 +63,28 @@ class RateLimiter:
 
 _login_limiter = RateLimiter(max_attempts=5, window_seconds=900)  # 5 per 15 min
 
+# Token TTL must match TokenStore default (30 days) so exp in response is accurate
+_TOKEN_TTL_SECONDS = 30 * 24 * 3600
+
 
 # ============================================================================
-# Password strength validation
+# Password strength validation (Item 54)
 # ============================================================================
+
+_SPECIAL_CHARS = set("!@#$%^&*-_")
+
 
 def validate_password_strength(password: str) -> str:
     """Validate password meets minimum strength requirements."""
+    msg = "Password must be at least 8 characters with 1 uppercase, 1 number, and 1 special character"
     if len(password) < 8:
-        raise ValueError("Password must be at least 8 characters")
-    if not any(c.isalpha() for c in password):
-        raise ValueError("Password must contain at least one letter")
+        raise ValueError(msg)
+    if not any(c.isupper() for c in password):
+        raise ValueError(msg)
     if not any(c.isdigit() for c in password):
-        raise ValueError("Password must contain at least one number")
+        raise ValueError(msg)
+    if not any(c in _SPECIAL_CHARS for c in password):
+        raise ValueError(msg)
     return password
 
 
@@ -257,6 +267,7 @@ async def setup_admin(
 @router.post("/login", response_model=LoginResponse)
 async def login(
     req: LoginRequest,
+    request: Request,
     ctx: AppContext = Depends(get_ctx),
 ):
     """
@@ -264,9 +275,13 @@ async def login(
     Returns a signed JWT bearer token and user info on success.
     Rate-limited: max 5 failed attempts per email per 15 minutes.
     """
-    # Rate limit check
     email_key = req.email.lower()
+    client_ip = request.client.host if request.client else "unknown"
+
+    # Rate limit check (Item 60)
     if _login_limiter.is_blocked(email_key):
+        audit("FAILED_LOGIN", "auth", email_key,
+              detail=f"ip={client_ip} reason=account_locked")
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many login attempts. Please try again in 15 minutes.",
@@ -277,21 +292,27 @@ async def login(
         user = ctx.users.get_user_by_email(req.email)
         if not user or not user.is_active:
             _login_limiter.record(email_key)
+            audit("FAILED_LOGIN", "auth", email_key,
+                  detail=f"ip={client_ip} reason=user_not_found")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid email or password",
             )
 
-        # Verify password using UserManager
+        # Verify password using UserManager (bcrypt, Item 58)
         if not ctx.users.verify_password(req.password, user.password_hash):
             _login_limiter.record(email_key)
+            audit("FAILED_LOGIN", "auth", email_key,
+                  detail=f"ip={client_ip} reason=wrong_password")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid email or password",
             )
 
-        # Login successful — reset rate limiter for this email
+        # Login successful — reset rate limiter and log (Items 59, 60)
         _login_limiter.reset(email_key)
+        audit("SUCCESS_LOGIN", "auth", user.id, user_id=user.id,
+              detail=f"ip={client_ip}")
 
         # Set user context on storage for permission checks
         ctx.storage.set_user_context(
@@ -401,7 +422,7 @@ async def register(
                 detail="Invalid or expired invite code",
             )
 
-        # Create the user
+        # Create the user (password hashed via bcrypt in UserManager, Item 58)
         user = ctx.users.create_user(
             email=req.email,
             username=req.username,

@@ -4,6 +4,16 @@ import Button from '@/components/Button';
 import Input from '@/components/Input';
 import { auth, setToken } from '@/api';
 
+// Must mirror server-side validate_password_strength rules (Item 54)
+const SPECIAL_CHARS = /[!@#$%^&*\-_]/;
+function validatePassword(pw) {
+  if (pw.length < 8) return 'At least 8 characters required';
+  if (!/[A-Z]/.test(pw)) return 'At least 1 uppercase letter required';
+  if (!/[0-9]/.test(pw)) return 'At least 1 number required';
+  if (!SPECIAL_CHARS.test(pw)) return 'At least 1 special character required (!@#$%^&*-_)';
+  return null;
+}
+
 export default function Login({ onLogin, needsSetup = false }) {
   // Modes: 'login', 'register', 'setup'
   const [mode, setMode] = useState(needsSetup ? 'setup' : 'login');
@@ -18,12 +28,14 @@ export default function Login({ onLogin, needsSetup = false }) {
   const [regEmail, setRegEmail] = useState('');
   const [regUsername, setRegUsername] = useState('');
   const [regPassword, setRegPassword] = useState('');
+  const [regPwHint, setRegPwHint] = useState(null);
   const [regInviteCode, setRegInviteCode] = useState('');
 
   // Setup form (first-run admin)
   const [setupEmail, setSetupEmail] = useState('');
   const [setupUsername, setSetupUsername] = useState('');
   const [setupPassword, setSetupPassword] = useState('');
+  const [setupPwHint, setSetupPwHint] = useState(null);
   const [setupConfirm, setSetupConfirm] = useState('');
 
   const handleLogin = async (e) => {
@@ -33,7 +45,7 @@ export default function Login({ onLogin, needsSetup = false }) {
     try {
       const data = await auth.login(loginEmail, loginPassword);
       setToken(data.token);
-      onLogin(data.token, data.user);
+      onLogin(data.token, data.user, data.exp ?? null);
     } catch (err) {
       setError(err.message || 'Login failed');
     } finally {
@@ -44,11 +56,13 @@ export default function Login({ onLogin, needsSetup = false }) {
   const handleRegister = async (e) => {
     e.preventDefault();
     setError('');
+    const hint = validatePassword(regPassword);
+    if (hint) { setError(hint); return; }
     setLoading(true);
     try {
       const data = await auth.register(regEmail, regUsername, regPassword, regInviteCode);
       setToken(data.token);
-      onLogin(data.token, data.user);
+      onLogin(data.token, data.user, data.exp ?? null);
     } catch (err) {
       setError(err.message || 'Registration failed');
     } finally {
@@ -64,16 +78,14 @@ export default function Login({ onLogin, needsSetup = false }) {
       setError('Passwords do not match');
       return;
     }
-    if (setupPassword.length < 8) {
-      setError('Password must be at least 8 characters');
-      return;
-    }
+    const hint = validatePassword(setupPassword);
+    if (hint) { setError(hint); return; }
 
     setLoading(true);
     try {
       const data = await auth.setup(setupEmail, setupUsername, setupPassword);
       setToken(data.token);
-      onLogin(data.token, data.user);
+      onLogin(data.token, data.user, data.exp ?? null);
     } catch (err) {
       setError(err.message || 'Setup failed');
     } finally {
@@ -121,14 +133,22 @@ export default function Login({ onLogin, needsSetup = false }) {
                 onChange={(e) => setSetupUsername(e.target.value)}
                 required
               />
-              <Input
-                label="Password"
-                type="password"
-                placeholder="Min 8 characters"
-                value={setupPassword}
-                onChange={(e) => setSetupPassword(e.target.value)}
-                required
-              />
+              <div>
+                <Input
+                  label="Password"
+                  type="password"
+                  placeholder="Min 8 chars, uppercase, number, special"
+                  value={setupPassword}
+                  onChange={(e) => {
+                    setSetupPassword(e.target.value);
+                    setSetupPwHint(e.target.value ? validatePassword(e.target.value) : null);
+                  }}
+                  required
+                />
+                {setupPwHint && (
+                  <p className="text-danger text-xs mt-1">{setupPwHint}</p>
+                )}
+              </div>
               <Input
                 label="Confirm Password"
                 type="password"
@@ -233,14 +253,22 @@ export default function Login({ onLogin, needsSetup = false }) {
                 onChange={(e) => setRegUsername(e.target.value)}
                 required
               />
-              <Input
-                label="Password"
-                type="password"
-                placeholder="••••••••"
-                value={regPassword}
-                onChange={(e) => setRegPassword(e.target.value)}
-                required
-              />
+              <div>
+                <Input
+                  label="Password"
+                  type="password"
+                  placeholder="Min 8 chars, uppercase, number, special"
+                  value={regPassword}
+                  onChange={(e) => {
+                    setRegPassword(e.target.value);
+                    setRegPwHint(e.target.value ? validatePassword(e.target.value) : null);
+                  }}
+                  required
+                />
+                {regPwHint && (
+                  <p className="text-danger text-xs mt-1">{regPwHint}</p>
+                )}
+              </div>
               <Button type="submit" variant="primary" className="w-full" disabled={loading}>
                 {loading ? 'Creating account...' : 'Register'}
               </Button>
