@@ -645,7 +645,7 @@ class SQLiteBackend(StorageBackend):
         self.vector_index.build_index(self._get_all_notes_for_index())
 
     def soft_delete_note(self, note_id: str) -> None:
-        """Soft-delete a note by setting is_deleted=True in its JSON blob."""
+        """Soft-delete a note by setting is_deleted=True in both JSON blob and column."""
         with self._session() as session:
             record = session.query(NoteRecord).filter(NoteRecord.id == note_id).first()
             if record:
@@ -653,7 +653,57 @@ class SQLiteBackend(StorageBackend):
                 note.is_deleted = True
                 note.last_modified = datetime.utcnow()
                 record.data = note.model_dump_json()
+                record.is_deleted = True  # keep the indexed column in sync
                 session.commit()
+
+    def list_all_notes(
+        self,
+        folder: str = "",
+        tag: str = "",
+        skip: int = 0,
+        limit: int = 0,
+    ) -> List[Note]:
+        """List notes directly from the SQLite database (not file-system based).
+
+        This is the authoritative listing method for notes created via the API.
+        File-based notes (legacy .md files) are NOT returned here; use
+        ``search_notes("")`` for those.
+        """
+        results: List[Note] = []
+        with self._session() as session:
+            q = session.query(NoteRecord).filter(NoteRecord.is_deleted != True)  # noqa: E712
+            if not (self._is_admin or self._is_gm):
+                uid = self._current_user_id or ""
+                if uid:
+                    q = q.filter(NoteRecord.owner_id == uid)
+            if folder:
+                q = q.filter(NoteRecord.folder == folder)
+            records = q.order_by(NoteRecord.created_at.desc()).all()
+            for record in records:
+                try:
+                    note = Note.model_validate_json(record.data)
+                    if not self._can_access(note.owner_id, note.permissions or {}):
+                        continue
+                    if tag and tag.lower() not in [t.lower() for t in (note.tags or [])]:
+                        continue
+                    results.append(note)
+                except Exception:
+                    continue
+        if limit > 0:
+            return results[skip: skip + limit]
+        return results
+
+    def list_all_folders(self) -> List[Folder]:
+        """List all folders directly from the SQLite database."""
+        results: List[Folder] = []
+        with self._session() as session:
+            for record in session.query(FolderRecord).all():
+                try:
+                    folder = Folder.model_validate_json(record.data)
+                    results.append(folder)
+                except Exception:
+                    continue
+        return results
 
     def list_notes(self, folder: str = "", skip: int = 0, limit: int = 0) -> List[str]:
         """List note file paths the current user can access.
