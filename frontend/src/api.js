@@ -33,6 +33,9 @@ async function request(method, path, body = null) {
     window.dispatchEvent(new CustomEvent('auth:logout'));
     throw new Error("Session expired");
   }
+  if (res.status === 429) {
+    throw new Error("__RATE_LIMIT__");
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || "Request failed");
@@ -49,6 +52,9 @@ async function requestText(method, path) {
     setToken(null);
     window.location.hash = "#/login";
     throw new Error("Session expired");
+  }
+  if (res.status === 429) {
+    throw new Error("__RATE_LIMIT__");
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -80,7 +86,6 @@ export const auth = {
 
 // ── Notes ────────────────────────────────────────────────────────────────────
 export const notes = {
-  // List & search
   list: (folder = "", tag = "") => {
     const params = new URLSearchParams();
     if (folder) params.set("folder", folder);
@@ -92,24 +97,20 @@ export const notes = {
   search: (query) =>
     request("GET", `/notes/search?q=${encodeURIComponent(query)}`),
 
-  // CRUD
   create: (title, content = "", folder_id = null, tags = [], meta = {}) =>
     request("POST", "/notes", { title, content, folder_id, tags, meta }),
   update: (id, data) =>
     request("PUT", `/notes/${encodeURIComponent(id)}`, data),
   delete: (id) => request("DELETE", `/notes/${encodeURIComponent(id)}`),
 
-  // Move
   move: (note_id, dest_folder_id) =>
     request("POST", "/notes/move", { note_id, dest_folder_id }),
 
-  // Tags
   addTag: (id, tag) =>
     request("POST", `/notes/${encodeURIComponent(id)}/tags`, { tag }),
   removeTag: (id, tag) =>
     request("DELETE", `/notes/${encodeURIComponent(id)}/tags/${encodeURIComponent(tag)}`),
 
-  // Metadata
   updateMeta: (id, meta) =>
     request("PUT", `/notes/${encodeURIComponent(id)}/meta`, { meta }),
 };
@@ -129,7 +130,11 @@ export const folders = {
 export const ai = {
   ask: (prompt, history = []) => request("POST", "/ai/ask", { prompt, history }),
   summarize: (text) => request("POST", "/ai/summarize", { text }),
-  suggestTags: (text) => request("POST", "/ai/suggest-tags", { text }),
+  suggestTags: (text, existingTags = []) =>
+    request("POST", "/ai/suggest-tags", { text, existing_tags: existingTags }),
+  proposeLinks: (text, noteNames = []) =>
+    request("POST", "/ai/propose-links", { text, note_names: noteNames }),
+  usage: () => request("GET", "/ai/usage"),
 };
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
@@ -169,3 +174,10 @@ export const debug = {
   deleteCrashLog: (filename) => request("DELETE", `/debug/crash-logs/${encodeURIComponent(filename)}`),
   getRuntimeLog: () => request("GET", "/debug/runtime-log"),
 };
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+export function isRateLimitError(err) {
+  return err?.message === "__RATE_LIMIT__";
+}
+
+export const RATE_LIMIT_MSG = "Rate limit reached — please wait a moment before trying again.";

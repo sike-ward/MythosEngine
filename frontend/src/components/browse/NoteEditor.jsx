@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import Card from '@/components/Card';
 import Button from '@/components/Button';
@@ -18,6 +18,11 @@ export default function NoteEditor({
   onDelete,
   onSummarize,
   onSuggestTags,
+  onSuggestLinks,
+  proposedLinks = [],
+  onClearProposedLinks,
+  summaryResult = '',
+  onClearSummary,
   showMoveDialog,
   onToggleMove,
   onMove,
@@ -26,6 +31,28 @@ export default function NoteEditor({
   noteLoading,
 }) {
   const [showPreview, setShowPreview] = useState(false);
+  const textareaRef = useRef(null);
+  // Deferred cursor position after React re-renders the textarea value
+  const [pendingCursor, setPendingCursor] = useState(null);
+
+  useEffect(() => {
+    if (pendingCursor !== null && textareaRef.current) {
+      textareaRef.current.selectionStart = pendingCursor;
+      textareaRef.current.selectionEnd = pendingCursor;
+      textareaRef.current.focus();
+      setPendingCursor(null);
+    }
+  }, [editContent, pendingCursor]);
+
+  const handleInsertLink = (link) => {
+    if (!textareaRef.current) return;
+    const ta = textareaRef.current;
+    const start = ta.selectionStart ?? editContent.length;
+    const insert = `[[${link}]]`;
+    const newContent = editContent.slice(0, start) + insert + editContent.slice(start);
+    onContentChange(newContent);
+    setPendingCursor(start + insert.length);
+  };
 
   if (noteLoading) {
     return (
@@ -67,6 +94,9 @@ export default function NoteEditor({
             {onSuggestTags && (
               <Button variant="ghost" size="sm" onClick={onSuggestTags}>Suggest Tags</Button>
             )}
+            {onSuggestLinks && (
+              <Button variant="ghost" size="sm" onClick={onSuggestLinks}>Suggest Links</Button>
+            )}
             <Button variant="danger" size="sm" onClick={onDelete}>Delete</Button>
           </>
         ) : (
@@ -82,6 +112,9 @@ export default function NoteEditor({
             >
               {showPreview ? 'Editor' : 'Preview'}
             </button>
+            {onSuggestLinks && (
+              <Button variant="ghost" size="sm" onClick={onSuggestLinks}>Suggest Links</Button>
+            )}
             <Button variant="primary" size="sm" onClick={onSave} title="Ctrl+S">
               Save
             </Button>
@@ -114,6 +147,32 @@ export default function NoteEditor({
         </div>
       )}
 
+      {/* Proposed links chips (item 109) */}
+      {proposedLinks.length > 0 && (
+        <div className="px-4 py-2 bg-elevated/40 border-b border-txt-muted/10">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-txt-muted font-medium shrink-0">Link suggestions:</span>
+            {proposedLinks.map((link) => (
+              <button
+                key={link}
+                onClick={() => handleInsertLink(link)}
+                className="text-xs px-2.5 py-1 rounded-full bg-accent/15 text-accent hover:bg-accent/30 transition font-medium"
+                title={`Insert [[${link}]]`}
+              >
+                {link}
+              </button>
+            ))}
+            <button
+              onClick={onClearProposedLinks}
+              className="text-xs text-txt-muted hover:text-txt ml-auto transition"
+              title="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Content area */}
       <div className="flex-1 overflow-y-auto p-5">
         {isEditing ? (
@@ -123,6 +182,7 @@ export default function NoteEditor({
             </div>
           ) : (
             <textarea
+              ref={textareaRef}
               value={editContent}
               onChange={(e) => onContentChange(e.target.value)}
               className="w-full h-full min-h-[300px] bg-elevated rounded-xl px-4 py-3 text-txt border-2 border-transparent focus:border-accent focus:outline-none transition resize-none font-mono text-sm"
@@ -136,6 +196,25 @@ export default function NoteEditor({
           </div>
         )}
       </div>
+
+      {/* Inline AI summary (item 116) */}
+      {summaryResult && (
+        <div className="mx-5 mb-3 p-3 bg-accent/8 rounded-xl border border-accent/20">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <p className="text-xs font-bold text-accent uppercase tracking-wider mb-1">AI Summary</p>
+              <p className="text-sm text-txt leading-relaxed">{summaryResult}</p>
+            </div>
+            <button
+              onClick={onClearSummary}
+              className="text-txt-muted hover:text-txt transition shrink-0 text-xs mt-0.5"
+              title="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Bottom bar */}
       <div className="px-4 py-2 border-t border-txt-muted/10 flex justify-between items-center text-xs text-txt-muted">

@@ -31,6 +31,9 @@ DEFAULT_CONFIG = {
     "STARTUP_TAB": "Dashboard",
     "COMPACT_MODE": False,
     "APP_NAME": "MythosEngine",
+    "PREFERRED_MODEL": "",
+    "STREAMING_ENABLED": True,
+    "AI_HISTORY_LIMIT": 10,
 }
 
 
