@@ -21,17 +21,17 @@ async def websocket_events(
     try:
         payload = decode_jwt(token)
     except HTTPException:
-        await websocket.close(code=4401)
+        await websocket.close(code=1008)
         return
     user = ctx.users.get_user(payload.get("sub", ""))
     if not user:
-        await websocket.close(code=4401)
+        await websocket.close(code=1008)
         return
 
     try:
         vault = resolve_vault(ctx, user, vault_id)
     except HTTPException:
-        await websocket.close(code=4403)
+        await websocket.close(code=1008)
         return
 
     await hub.connect(vault.id, user.id, user.username, websocket)

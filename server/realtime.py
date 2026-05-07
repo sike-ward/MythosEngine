@@ -14,6 +14,10 @@ class RealtimeHub:
         self._editing: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
         self._lock = asyncio.Lock()
 
+    @staticmethod
+    def _is_connected(websocket: WebSocket) -> bool:
+        return getattr(getattr(websocket, "client_state", None), "name", "") == "CONNECTED"
+
     async def connect(self, vault_id: str, user_id: str, username: str, websocket: WebSocket) -> None:
         await websocket.accept()
         async with self._lock:
@@ -24,10 +28,7 @@ class RealtimeHub:
     async def disconnect(self, vault_id: str, user_id: str, websocket: WebSocket) -> None:
         async with self._lock:
             self._connections[vault_id].discard(websocket)
-            if not any(
-                getattr(getattr(ws, "client_state", None), "name", "") == "CONNECTED"
-                for ws in self._connections[vault_id]
-            ):
+            if not any(self._is_connected(ws) for ws in self._connections[vault_id]):
                 self._connections.pop(vault_id, None)
             self._online_users[vault_id].pop(user_id, None)
             for note_id, presence in list(self._editing[vault_id].items()):

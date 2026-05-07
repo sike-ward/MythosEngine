@@ -209,7 +209,7 @@ def _folder_to_response(folder, ctx, user) -> FolderResponse:
     )
 
 
-def _get_default_vault_id(ctx: AppContext, user: User, requested_vault_id: Optional[str] = None) -> str:
+def _resolve_vault_id(ctx: AppContext, user: User, requested_vault_id: Optional[str] = None) -> str:
     return resolve_vault(ctx, user, requested_vault_id).id
 
 
@@ -282,7 +282,7 @@ async def search_notes(
     """
     try:
         _set_user_ctx(ctx, user)
-        vault_id = _get_default_vault_id(ctx, user, vault_id)
+        vault_id = _resolve_vault_id(ctx, user, vault_id)
         tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
 
         # ── FTS mode ─────────────────────────────────────────────────────────
@@ -404,7 +404,7 @@ async def list_folders(
     """List all folders."""
     try:
         _set_user_ctx(ctx, user)
-        vault_id = _get_default_vault_id(ctx, user, vault_id)
+        vault_id = _resolve_vault_id(ctx, user, vault_id)
         results = []
 
         # Primary: query folders stored in the SQLite database
@@ -474,7 +474,7 @@ async def list_notes(
     """List notes, optionally filtered by folder and/or tag. Returns paginated response."""
     try:
         _set_user_ctx(ctx, user)
-        vault_id = _get_default_vault_id(ctx, user, vault_id)
+        vault_id = _resolve_vault_id(ctx, user, vault_id)
 
         # Primary: query notes directly from the SQLite database.
         # This covers all notes created via the API (which have no .md file on disk).
@@ -540,7 +540,7 @@ async def create_note(
     """Create a new note."""
     try:
         _set_user_ctx(ctx, user)
-        vault_id = _get_default_vault_id(ctx, user, req.vault_id)
+        vault_id = _resolve_vault_id(ctx, user, req.vault_id)
         note = ctx.notes.create_note(
             vault_id=vault_id,
             owner_id=user.id,
@@ -776,7 +776,7 @@ async def create_folder(
     """Create a new folder."""
     try:
         _set_user_ctx(ctx, user)
-        vault_id = _get_default_vault_id(ctx, user, req.vault_id)
+        vault_id = _resolve_vault_id(ctx, user, req.vault_id)
         folder = ctx.folders.create_folder(
             vault_id=vault_id,
             name=req.name,

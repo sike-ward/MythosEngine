@@ -1340,6 +1340,8 @@ class SQLiteBackend(StorageBackend):
             imported_vault.id = new_vault_id or str(uuid.uuid4())
             imported_vault.owner_id = owner_id
             imported_vault.name = name or f"{imported_vault.name} (Imported)"
+            # Imported vault sharing is intentionally cleared so the receiving
+            # environment never inherits stale access from the source system.
             imported_vault.members = []
             imported_vault.permissions = {}
             imported_vault.is_active = True

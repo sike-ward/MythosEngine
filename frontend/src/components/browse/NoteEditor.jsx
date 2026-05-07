@@ -37,11 +37,7 @@ export default function NoteEditor({
   const textareaRef = useRef(null);
   // Deferred cursor position after React re-renders the textarea value
   const [pendingCursor, setPendingCursor] = useState(null);
-  const editingText = editingPresence
-    ? `${editingPresence.username} is editing this note${
-        editingPresence.cursor != null ? ` (cursor ${editingPresence.cursor})` : ''
-      }.`
-    : null;
+  const editingText = editingPresence ? `${editingPresence.username} is editing this note.` : null;
 
   useEffect(() => {
     if (pendingCursor !== null && textareaRef.current) {

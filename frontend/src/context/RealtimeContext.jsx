@@ -26,8 +26,8 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
           setOnlineUsers(payload.users || []);
           setEditing(payload.editing || []);
         }
-      } catch {
-        // ignore malformed events
+      } catch (error) {
+        console.warn('Failed to parse realtime event', error);
       }
     };
 
