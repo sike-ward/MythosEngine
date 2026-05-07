@@ -1,18 +1,20 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
 import SectionHeader from '@/components/SectionHeader';
 import Card from '@/components/Card';
 import Button from '@/components/Button';
 import Input, { TextArea } from '@/components/Input';
 import Badge from '@/components/Badge';
-import { notes, folders } from '@/api';
+import { notes, folders, ai, settings, users } from '@/api';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Browse — Full vault browser with folder tree, editing, tags, metadata
 // ════════════════════════════════════════════════════════════════════════════
 
-export default function Browse() {
+export default function Browse({ user }) {
   const [searchParams] = useSearchParams();
+  const isAdmin = user?.roles?.includes?.('admin') || user?.role === 'admin';
 
   // ── Data ─────────────────────────────────────────────────────────────────
   const [allNotes, setAllNotes] = useState([]);
@@ -20,18 +22,19 @@ export default function Browse() {
   const [loading, setLoading] = useState(true);
 
   // ── Selection & navigation ───────────────────────────────────────────────
-  const [selectedNote, setSelectedNote] = useState(null); // full NoteDetail
-  const [activeFolder, setActiveFolder] = useState(null); // folder id or null = "All"
+  const [selectedNote, setSelectedNote] = useState(null);
+  const [activeFolder, setActiveFolder] = useState(null);
   const [expandedFolders, setExpandedFolders] = useState(new Set());
 
-  // ── Editing ──────────────────────────────────────────────────────────────
+  // ── Editing & preview ────────────────────────────────────────────────────
   const [isEditing, setIsEditing] = useState(false);
+  const [previewMode, setPreviewMode] = useState(false);
   const [editTitle, setEditTitle] = useState('');
   const [editContent, setEditContent] = useState('');
 
   // ── Search ───────────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState(null); // null = not searching
+  const [searchResults, setSearchResults] = useState(null);
   const searchTimeout = useRef(null);
 
   // ── Tag filter ───────────────────────────────────────────────────────────
@@ -39,6 +42,25 @@ export default function Browse() {
 
   // ── New tag input ────────────────────────────────────────────────────────
   const [newTag, setNewTag] = useState('');
+
+  // ── AI: Summarize ─────────────────────────────────────────────────────────
+  const [summarizing, setSummarizing] = useState(false);
+  const [summaryResult, setSummaryResult] = useState('');
+  const [showSummaryModal, setShowSummaryModal] = useState(false);
+
+  // ── AI: Suggest Tags ──────────────────────────────────────────────────────
+  const [suggestedTags, setSuggestedTags] = useState([]);
+  const [suggestingTags, setSuggestingTags] = useState(false);
+
+  // ── Autosave ──────────────────────────────────────────────────────────────
+  const [autosaveEnabled, setAutosaveEnabled] = useState(false);
+  const [autosaveStatus, setAutosaveStatus] = useState('');
+  const autosaveTimer = useRef(null);
+
+  // ── Permissions ───────────────────────────────────────────────────────────
+  const [addPermUser, setAddPermUser] = useState('');
+  const [addPermRole, setAddPermRole] = useState('viewer');
+  const [usersList, setUsersList] = useState([]);
 
   // ── Create note/folder dialogs ───────────────────────────────────────────
   const [showCreateNote, setShowCreateNote] = useState(false);
@@ -78,6 +100,19 @@ export default function Browse() {
 
   useEffect(() => { loadData(); }, []);
 
+  // Load autosave preference from settings
+  useEffect(() => {
+    settings.get().then((data) => {
+      if (data.autosave !== undefined) setAutosaveEnabled(data.autosave);
+    }).catch(() => {});
+  }, []);
+
+  // Load users list for permissions UI (admin only)
+  useEffect(() => {
+    if (!isAdmin) return;
+    users.list().then(setUsersList).catch(() => {});
+  }, [isAdmin]);
+
   // Auto-select note from URL query param (e.g. /browse?note=abc123)
   useEffect(() => {
     const noteId = searchParams.get('note');
@@ -85,6 +120,27 @@ export default function Browse() {
       handleSelectNote({ id: noteId });
     }
   }, [loading, allNotes, searchParams]);
+
+  // Autosave: debounced 1500ms, only when editing an existing note
+  useEffect(() => {
+    if (!autosaveEnabled || !isEditing || !selectedNote?.id) return;
+    clearTimeout(autosaveTimer.current);
+    setAutosaveStatus('saving');
+    autosaveTimer.current = setTimeout(async () => {
+      try {
+        const updated = await notes.update(selectedNote.id, {
+          title: editTitle,
+          content: editContent,
+        });
+        setSelectedNote(updated);
+        setAutosaveStatus('saved');
+        setTimeout(() => setAutosaveStatus(''), 2000);
+      } catch {
+        setAutosaveStatus('');
+      }
+    }, 1500);
+    return () => clearTimeout(autosaveTimer.current);
+  }, [editContent, editTitle, autosaveEnabled, isEditing]);
 
   const flash = (msg) => {
     setStatusMsg(msg);
@@ -116,10 +172,8 @@ export default function Browse() {
   // Derived data
   // ════════════════════════════════════════════════════════════════════════
 
-  // All unique tags across notes
   const allTags = [...new Set(allNotes.flatMap((n) => n.tags || []))].sort();
 
-  // Notes to display (filtered by folder and tag)
   const displayNotes = (() => {
     if (searchResults) return searchResults;
     let list = allNotes;
@@ -134,7 +188,6 @@ export default function Browse() {
     return list;
   })();
 
-  // Group notes by folder for tree display
   const notesByFolder = {};
   allNotes.forEach((n) => {
     const fid = n.folder_id || '__unfiled__';
@@ -143,13 +196,18 @@ export default function Browse() {
   });
   const unfiledNotes = notesByFolder['__unfiled__'] || [];
 
+  const canEditPerms = selectedNote && (isAdmin || selectedNote.owner_id === user?.id);
+
   // ════════════════════════════════════════════════════════════════════════
   // Note selection
   // ════════════════════════════════════════════════════════════════════════
 
   const handleSelectNote = async (noteItem) => {
     setIsEditing(false);
+    setPreviewMode(false);
     setShowMetaEditor(false);
+    setSuggestedTags([]);
+    setAutosaveStatus('');
     try {
       const detail = await notes.get(noteItem.id);
       setSelectedNote(detail);
@@ -168,12 +226,27 @@ export default function Browse() {
   const handleSave = async () => {
     if (!selectedNote) return;
     try {
+      // Auto-link detection: scan for [[title]] patterns, resolve to note IDs
+      const linkPattern = /\[\[([^\]]+)\]\]/g;
+      const matches = [...editContent.matchAll(linkPattern)].map((m) => m[1]);
+      const links = [...new Set(
+        matches.flatMap((title) => {
+          const found = allNotes.find(
+            (n) => (n.title || '').toLowerCase() === title.toLowerCase()
+          );
+          return found ? [found.id] : [];
+        })
+      )];
+
       const updated = await notes.update(selectedNote.id, {
         title: editTitle,
         content: editContent,
+        links,
       });
       setSelectedNote(updated);
       setIsEditing(false);
+      setPreviewMode(false);
+      setAutosaveStatus('');
       flash('Saved');
       await loadData();
     } catch (err) {
@@ -326,6 +399,20 @@ export default function Browse() {
     }
   };
 
+  const handleAddPermission = async () => {
+    if (!selectedNote || !addPermUser.trim()) return;
+    const newPerms = { ...(selectedNote.permissions || {}), [addPermUser.trim()]: addPermRole };
+    await handleUpdatePermissions(newPerms);
+    setAddPermUser('');
+  };
+
+  const handleRemovePermission = async (userId) => {
+    if (!selectedNote) return;
+    const newPerms = { ...(selectedNote.permissions || {}) };
+    delete newPerms[userId];
+    await handleUpdatePermissions(newPerms);
+  };
+
   // ════════════════════════════════════════════════════════════════════════
   // Group assignment
   // ════════════════════════════════════════════════════════════════════════
@@ -338,6 +425,66 @@ export default function Browse() {
       flash('Group updated');
     } catch (err) {
       flash('Failed to update group: ' + err.message);
+    }
+  };
+
+  // ════════════════════════════════════════════════════════════════════════
+  // AI: Summarize
+  // ════════════════════════════════════════════════════════════════════════
+
+  const handleSummarize = async () => {
+    if (!selectedNote) return;
+    setSummarizing(true);
+    try {
+      const res = await ai.summarize(selectedNote.content || '');
+      setSummaryResult(res.summary);
+      setShowSummaryModal(true);
+    } catch (err) {
+      flash('Summarize failed: ' + err.message);
+    } finally {
+      setSummarizing(false);
+    }
+  };
+
+  const handleSaveSummary = async () => {
+    if (!selectedNote || !summaryResult) return;
+    try {
+      const updated = await notes.updateMeta(selectedNote.id, { ai_summary: summaryResult });
+      setSelectedNote(updated);
+      setShowSummaryModal(false);
+      flash('Summary saved');
+    } catch (err) {
+      flash('Failed to save summary: ' + err.message);
+    }
+  };
+
+  // ════════════════════════════════════════════════════════════════════════
+  // AI: Suggest Tags
+  // ════════════════════════════════════════════════════════════════════════
+
+  const handleSuggestTags = async () => {
+    if (!selectedNote) return;
+    setSuggestingTags(true);
+    try {
+      const res = await ai.suggestTags(selectedNote.content || '');
+      const existing = new Set((selectedNote.tags || []).map((t) => t.toLowerCase()));
+      setSuggestedTags(res.tags.filter((t) => !existing.has(t.toLowerCase())));
+    } catch (err) {
+      flash('Tag suggestion failed: ' + err.message);
+    } finally {
+      setSuggestingTags(false);
+    }
+  };
+
+  const handleAddSuggestedTag = async (tag) => {
+    if (!selectedNote) return;
+    try {
+      const updated = await notes.addTag(selectedNote.id, tag);
+      setSelectedNote(updated);
+      setSuggestedTags((prev) => prev.filter((t) => t !== tag));
+      await loadData();
+    } catch (err) {
+      flash('Failed to add tag: ' + err.message);
     }
   };
 
@@ -579,6 +726,14 @@ export default function Browse() {
                     <Button variant="secondary" size="sm" onClick={() => setShowMoveDialog(!showMoveDialog)}>
                       Move
                     </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleSummarize}
+                      disabled={summarizing}
+                    >
+                      {summarizing ? '⏳' : '✦ Summarize'}
+                    </Button>
                     <Button variant="danger" size="sm" onClick={handleDelete}>
                       Delete
                     </Button>
@@ -590,13 +745,31 @@ export default function Browse() {
                       onChange={(e) => setEditTitle(e.target.value)}
                       className="flex-1 bg-elevated rounded-lg px-3 py-1.5 text-lg font-bold text-txt border border-transparent focus:border-accent focus:outline-none"
                     />
+                    {/* Preview/Edit toggle */}
+                    <button
+                      onClick={() => setPreviewMode(!previewMode)}
+                      className={`text-xs px-2 py-1 rounded-lg transition font-medium ${
+                        previewMode
+                          ? 'bg-accent text-white'
+                          : 'bg-elevated text-txt-muted hover:text-txt'
+                      }`}
+                    >
+                      {previewMode ? 'Editing…' : 'Preview'}
+                    </button>
+                    {autosaveStatus && (
+                      <span className="text-txt-muted text-xs whitespace-nowrap">
+                        {autosaveStatus === 'saving' ? 'Saving…' : '✓ Saved'}
+                      </span>
+                    )}
                     <Button variant="primary" size="sm" onClick={handleSave}>
                       Save
                     </Button>
                     <Button variant="ghost" size="sm" onClick={() => {
                       setIsEditing(false);
+                      setPreviewMode(false);
                       setEditTitle(selectedNote.title);
                       setEditContent(selectedNote.content || '');
+                      setAutosaveStatus('');
                     }}>
                       Cancel
                     </Button>
@@ -630,17 +803,15 @@ export default function Browse() {
 
               {/* Content area */}
               <div className="flex-1 overflow-y-auto p-5">
-                {isEditing ? (
+                {isEditing && !previewMode ? (
                   <textarea
                     value={editContent}
                     onChange={(e) => setEditContent(e.target.value)}
                     className="w-full h-full min-h-[300px] bg-elevated rounded-xl px-4 py-3 text-txt border-2 border-transparent focus:border-accent focus:outline-none transition resize-none font-mono text-sm"
                   />
                 ) : (
-                  <div className="prose prose-invert max-w-none">
-                    <div className="text-txt whitespace-pre-wrap text-sm leading-relaxed">
-                      {selectedNote.content || 'No content'}
-                    </div>
+                  <div className="prose prose-sm max-w-none dark:prose-invert">
+                    <ReactMarkdown>{isEditing ? editContent : (selectedNote.content || '*No content*')}</ReactMarkdown>
                   </div>
                 )}
               </div>
@@ -680,7 +851,17 @@ export default function Browse() {
 
               {/* ── Tags ──────────────────────────────────────────────── */}
               <div>
-                <p className="text-xs font-bold text-txt-muted uppercase tracking-wider mb-2">Tags</p>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-bold text-txt-muted uppercase tracking-wider">Tags</p>
+                  <button
+                    onClick={handleSuggestTags}
+                    disabled={suggestingTags}
+                    className="text-accent text-xs font-bold hover:bg-accent/10 px-1.5 py-0.5 rounded transition disabled:opacity-40"
+                    title="AI Suggest Tags"
+                  >
+                    {suggestingTags ? '⏳' : '✦ Suggest'}
+                  </button>
+                </div>
                 <div className="flex flex-wrap gap-1.5 mb-2">
                   {(selectedNote.tags || []).length > 0 ? (
                     selectedNote.tags.map((tag) => (
@@ -701,6 +882,25 @@ export default function Browse() {
                     <span className="text-txt-muted text-xs">No tags</span>
                   )}
                 </div>
+
+                {/* AI-suggested tags chips */}
+                {suggestedTags.length > 0 && (
+                  <div className="mb-2">
+                    <p className="text-[10px] text-txt-muted uppercase tracking-wide mb-1">Suggestions (click to add)</p>
+                    <div className="flex flex-wrap gap-1">
+                      {suggestedTags.map((tag) => (
+                        <button
+                          key={tag}
+                          onClick={() => handleAddSuggestedTag(tag)}
+                          className="inline-flex items-center bg-elevated border border-accent/30 text-txt-muted hover:text-accent hover:border-accent rounded-full px-2 py-0.5 text-xs transition"
+                        >
+                          + {tag}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex gap-1">
                   <input
                     value={newTag}
@@ -744,16 +944,68 @@ export default function Browse() {
               <div>
                 <p className="text-xs font-bold text-txt-muted uppercase tracking-wider mb-1">Permissions</p>
                 {Object.keys(selectedNote.permissions || {}).length > 0 ? (
-                  <div className="space-y-1">
+                  <div className="space-y-1 mb-2">
                     {Object.entries(selectedNote.permissions).map(([userId, role]) => (
-                      <div key={userId} className="flex justify-between text-xs">
+                      <div key={userId} className="flex justify-between items-center text-xs">
                         <span className="text-txt truncate">{userId}</span>
-                        <Badge label={role} variant={role === 'admin' ? 'admin' : 'player'} />
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <Badge label={role} variant={role === 'admin' ? 'admin' : 'player'} />
+                          {canEditPerms && (
+                            <button
+                              onClick={() => handleRemovePermission(userId)}
+                              className="text-danger text-[10px] hover:bg-danger/10 px-1 rounded transition"
+                              title="Remove permission"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <p className="text-txt-muted text-xs">Owner only</p>
+                  <p className="text-txt-muted text-xs mb-2">Owner only</p>
+                )}
+                {canEditPerms && (
+                  <div className="space-y-1">
+                    {isAdmin && usersList.length > 0 ? (
+                      <select
+                        value={addPermUser}
+                        onChange={(e) => setAddPermUser(e.target.value)}
+                        className="w-full bg-elevated rounded-lg px-2 py-1 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
+                      >
+                        <option value="">Select user...</option>
+                        {usersList.map((u) => (
+                          <option key={u.id} value={u.id}>{u.username}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        value={addPermUser}
+                        onChange={(e) => setAddPermUser(e.target.value)}
+                        placeholder="User ID..."
+                        className="w-full bg-elevated rounded-lg px-2 py-1 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
+                      />
+                    )}
+                    <div className="flex gap-1">
+                      <select
+                        value={addPermRole}
+                        onChange={(e) => setAddPermRole(e.target.value)}
+                        className="flex-1 bg-elevated rounded-lg px-2 py-1 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
+                      >
+                        <option value="viewer">viewer</option>
+                        <option value="editor">editor</option>
+                        <option value="owner">owner</option>
+                      </select>
+                      <button
+                        onClick={handleAddPermission}
+                        disabled={!addPermUser.trim()}
+                        className="text-accent text-xs font-bold px-2 hover:bg-accent/10 rounded-lg transition disabled:opacity-30"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
 
@@ -872,6 +1124,24 @@ export default function Browse() {
           </Card>
         )}
       </div>
+
+      {/* ── AI Summary Modal ──────────────────────────────────────────── */}
+      {showSummaryModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
+          <div className="bg-card rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-4">
+            <h3 className="text-lg font-bold text-txt">AI Summary</h3>
+            <p className="text-sm text-txt-secondary leading-relaxed">{summaryResult}</p>
+            <div className="flex gap-2 justify-end pt-2">
+              <Button variant="ghost" size="sm" onClick={() => setShowSummaryModal(false)}>
+                Dismiss
+              </Button>
+              <Button variant="primary" size="sm" onClick={handleSaveSummary}>
+                Save as ai_summary
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

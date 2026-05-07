@@ -3,12 +3,14 @@ import SectionHeader from '@/components/SectionHeader';
 import Card from '@/components/Card';
 import Button from '@/components/Button';
 import { TextArea } from '@/components/Input';
-import { ai } from '@/api';
+import { ai, notes } from '@/api';
 
 export default function Chat() {
   const [messages, setMessages] = useState([]);
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(false);
+  const [sessionTokens, setSessionTokens] = useState(0);
+  const [saveStatus, setSaveStatus] = useState('');
   const chatEndRef = useRef(null);
 
   // Auto-scroll to bottom when messages change
@@ -28,9 +30,16 @@ export default function Chat() {
 
     try {
       const response = await ai.ask(prompt);
+      const msgTokens = (response.prompt_tokens || 0) + (response.completion_tokens || 0);
+      setSessionTokens((prev) => prev + msgTokens);
       setMessages((prev) => [
         ...prev,
-        { id: nextId(), role: 'assistant', content: response.response },
+        {
+          id: nextId(),
+          role: 'assistant',
+          content: response.response,
+          tokens: msgTokens,
+        },
       ]);
     } catch (err) {
       setMessages((prev) => [
@@ -45,6 +54,25 @@ export default function Chat() {
   const handleClear = () => {
     setMessages([]);
     setPrompt('');
+    setSessionTokens(0);
+  };
+
+  const handleSaveToNote = async () => {
+    if (messages.length === 0) return;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const content = messages
+      .filter((m) => m.role !== 'error')
+      .map((m) => (m.role === 'user' ? `**User:** ${m.content}` : `**AI:** ${m.content}`))
+      .join('\n\n');
+
+    try {
+      await notes.create(`Chat ${timestamp}`, content, null, ['ai-chat']);
+      setSaveStatus('Saved to Browse → Chat folder');
+      setTimeout(() => setSaveStatus(''), 3000);
+    } catch (err) {
+      setSaveStatus('Failed to save: ' + err.message);
+      setTimeout(() => setSaveStatus(''), 3000);
+    }
   };
 
   const handleKeyDown = (e) => {
@@ -56,10 +84,27 @@ export default function Chat() {
   return (
     <div className="p-10 space-y-6 flex flex-col h-full">
       {/* Header */}
-      <SectionHeader
-        title="✦ AI Assistant"
-        subtitle="Ask anything about your world, lore, or notes."
-      />
+      <div className="flex items-start justify-between">
+        <SectionHeader
+          title="✦ AI Assistant"
+          subtitle="Ask anything about your world, lore, or notes."
+        />
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {saveStatus && (
+            <span className="text-accent text-xs font-medium bg-accent/10 px-3 py-1.5 rounded-lg">
+              {saveStatus}
+            </span>
+          )}
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleSaveToNote}
+            disabled={messages.length === 0 || loading}
+          >
+            Save to Note
+          </Button>
+        </div>
+      </div>
 
       {/* Chat History */}
       <div className="flex-1 overflow-y-auto space-y-4">
@@ -78,16 +123,23 @@ export default function Chat() {
               key={msg.id}
               className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
-              <div
-                className={`max-w-xs lg:max-w-md px-4 py-4 rounded-xl ${
-                  msg.role === 'user'
-                    ? 'bg-accent/10 text-txt'
-                    : msg.role === 'error'
-                      ? 'bg-danger/10 text-danger border border-danger/20'
-                      : 'bg-card text-txt'
-                }`}
-              >
-                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+              <div>
+                <div
+                  className={`max-w-xs lg:max-w-md px-4 py-4 rounded-xl ${
+                    msg.role === 'user'
+                      ? 'bg-accent/10 text-txt'
+                      : msg.role === 'error'
+                        ? 'bg-danger/10 text-danger border border-danger/20'
+                        : 'bg-card text-txt'
+                  }`}
+                >
+                  <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                </div>
+                {msg.role === 'assistant' && msg.tokens > 0 && (
+                  <p className="text-[10px] text-txt-muted mt-0.5 px-1">
+                    {msg.tokens.toLocaleString()} tokens
+                  </p>
+                )}
               </div>
             </div>
           ))
@@ -104,6 +156,13 @@ export default function Chat() {
         )}
         <div ref={chatEndRef} />
       </div>
+
+      {/* Session token total */}
+      {sessionTokens > 0 && (
+        <p className="text-xs text-txt-muted text-right -mb-2">
+          Session: {sessionTokens.toLocaleString()} tokens used
+        </p>
+      )}
 
       {/* Input Area */}
       <Card className="p-6 space-y-4">

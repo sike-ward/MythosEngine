@@ -23,7 +23,7 @@ from fastapi.responses import JSONResponse
 from MythosEngine.config.config import Config
 from MythosEngine.context.app_context import AppContext
 from server.dependencies import set_app_context
-from server.routes import ai, auth, dashboard, invites, notes, settings, users
+from server.routes import ai, auth, dashboard, debug, invites, notes, settings, users
 
 logger = logging.getLogger(__name__)
 
@@ -120,13 +120,14 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 
-app.include_router(auth.router)
-app.include_router(notes.router)
+app.include_router(auth.router, prefix="/auth", tags=["auth"])
+app.include_router(notes.router, prefix="/notes", tags=["notes"])
 app.include_router(ai.router)
 app.include_router(dashboard.router)
 app.include_router(settings.router)
-app.include_router(users.router)
-app.include_router(invites.router)
+app.include_router(users.router, prefix="/users", tags=["users"])
+app.include_router(invites.router, prefix="/invites", tags=["invites"])
+app.include_router(debug.router, prefix="/debug", tags=["debug"])
 
 
 # ── Health check ─────────────────────────────────────────────────────────────
