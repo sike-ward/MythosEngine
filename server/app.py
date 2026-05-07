@@ -46,7 +46,19 @@ from fastapi.responses import JSONResponse
 from MythosEngine.config.config import Config
 from MythosEngine.context.app_context import AppContext
 from server.dependencies import set_app_context
-from server.routes import ai, auth, characters, dashboard, debug, invites, notes, sessions, settings, users
+from server.routes import (
+    ai,
+    auth,
+    characters,
+    dashboard,
+    debug,
+    invites,
+    maps,
+    notes,
+    sessions,
+    settings,
+    users,
+)
 
 from server.limiter import limiter
 from server.middleware.logging import LoggingMiddleware
@@ -168,6 +180,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(notes.router, prefix="/notes", tags=["notes"])
 app.include_router(sessions.router, prefix="/sessions", tags=["sessions"])
+app.include_router(maps.router, prefix="/maps", tags=["maps"])
 app.include_router(characters.router, prefix="/characters", tags=["characters"])
 app.include_router(ai.router)
 app.include_router(dashboard.router)

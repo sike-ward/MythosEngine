@@ -9,6 +9,7 @@ import Characters from "./pages/Characters";
 import Create from "./pages/Create";
 import Sessions from "./pages/Sessions";
 import Universe from "./pages/Universe";
+import Maps from "./pages/Maps";
 import Settings from "./pages/Settings";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
@@ -143,6 +144,7 @@ export default function App() {
             <Route path="/create" element={<Create />} />
             <Route path="/sessions" element={<Sessions user={user} />} />
             <Route path="/universe" element={<Universe />} />
+            <Route path="/maps" element={<Maps />} />
             <Route path="/settings" element={<Settings user={user} />} />
             <Route path="*" element={<NotFound />} />
           </Routes>

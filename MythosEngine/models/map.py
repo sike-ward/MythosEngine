@@ -25,7 +25,9 @@ class Map(CoreModel):
     group_id: Optional[str] = Field(default=None, description="Group/party with access.")
     name: str = Field(..., min_length=1, max_length=128, description="Map title.")
     description: Optional[str] = Field(default=None, description="Map summary or context.")
-    file_path: str = Field(..., description="Relative or absolute path to the map image asset.")
+    map_type: str = Field(default="region", description="Map category: region, dungeon, city, or world.")
+    file_path: str = Field(default="", description="Relative or absolute path to the map image asset.")
+    markers: List[Dict[str, Any]] = Field(default_factory=list, description="Map markers: [{id, x, y, label, note_id}].")
     permissions: Dict[str, str] = Field(
         default_factory=dict,
         description="Per-user/group permission overrides (read/write/admin).",

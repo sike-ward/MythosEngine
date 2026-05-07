@@ -7,6 +7,7 @@ import {
   Users,
   Wand2,
   Globe,
+  Map,
   Settings,
   LogOut,
 } from 'lucide-react';
@@ -20,6 +21,7 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user }) => {
     { icon: Wand2, label: 'Create', path: '/create' },
     { icon: Scroll, label: 'Sessions', path: '/sessions' },
     { icon: Globe, label: 'Universe', path: '/universe' },
+    { icon: Map, label: 'Maps', path: '/maps' },
   ];
 
   return (
