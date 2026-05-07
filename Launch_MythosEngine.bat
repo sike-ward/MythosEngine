@@ -47,6 +47,10 @@ echo Starting API server...
 start "MythosEngine-API" /min "%PYTHON%" -m uvicorn server.app:app --host 127.0.0.1 --port 8741
 
 call :wait_for_api
+if errorlevel 1 (
+    echo [ERROR] API failed to start. Aborting.
+    exit /b 1
+)
 echo [OK] API running
 
 echo.
