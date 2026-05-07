@@ -46,9 +46,16 @@ htmlcov/
 .vscode/
 .idea/
 
-# Obsidian
-.obsidian/workspace.json
-.obsidian/workspace-mobile.json
+# Obsidian user config & plugin artifacts
+.obsidian/
+Obsidian/.obsidian/
+
+# Obsidian runtime/generated content
+Obsidian/loreai_index/
+Obsidian/summaries/
+Obsidian/.versions/
+*.canvas
+*.bak
 
 # OS
 .DS_Store
@@ -57,9 +64,14 @@ Thumbs.db
 # Local config — contains secrets and machine-specific paths
 MythosEngine/config/settings.json
 
-# Project temp files
-*.canvas
+# Runtime logs
+launch_log.txt
+
+# AI usage telemetry
 ai_usage_log.csv
+Ward_DND_AI/config/settings.json
+
+# Project temp files
 directory_tree.txt
 py_files.txt
 ward_dnd_ai_tree.txt

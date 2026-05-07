@@ -178,13 +178,16 @@ class SMTPReporter:
         # Extract first line of error for summary
         error_summary = error_msg.split("\n")[0] if error_msg else "Unknown error"
 
+        # Resolve log directory relative to the project root, matching crash_handler.py
+        _log_dir = Path(__file__).resolve().parent.parent.parent / "logs"
+
         # Read last 20 lines of audit.log if it exists
-        audit_log_tail = self._read_log_tail(Path.cwd() / "logs" / "audit.log", 20)
+        audit_log_tail = self._read_log_tail(_log_dir / "audit.log", 20)
 
         # Read last 20 lines of app.log if it exists
-        app_log_tail = self._read_log_tail(Path.cwd() / "logs" / "app.log", 20)
+        app_log_tail = self._read_log_tail(_log_dir / "app.log", 20)
 
-        body = f"""WARDAI CRASH REPORT
+        body = f"""MYTHOSENGINE CRASH REPORT
 {"=" * 70}
 
 TIMESTAMP

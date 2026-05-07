@@ -5,6 +5,8 @@ Only functional when logged in as an admin; shows an access-denied message
 otherwise.
 """
 
+import logging
+
 import bcrypt
 from PyQt6.QtWidgets import (
     QApplication,
@@ -25,6 +27,8 @@ from MythosEngine.gui.settings.users.view_users import (
     UserManagementView,
 )
 from MythosEngine.gui.widgets import AvatarCircle, GlowButton, StatusBadge
+
+logger = logging.getLogger(__name__)
 
 
 class UserManagementController:
@@ -135,10 +139,10 @@ class UserManagementController:
                 for rec in session.query(UserRecord).all():
                     try:
                         users.append(User.model_validate_json(rec.data))
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+                    except Exception as exc:
+                        logger.warning("_load_all_users: skipping corrupt user record: %s", exc)
+        except Exception as exc:
+            logger.error("_load_all_users: database query failed: %s", exc)
         return users
 
     def _make_user_actions(self, user):

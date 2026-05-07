@@ -29,20 +29,42 @@ class RandomGeneratorController(QObject):
 
         if not prompt:
             self._show_output("[Please enter a prompt]")
-
             return
 
-        # Call your AI engine's random generate method
-
-        result = self.ai.generate_random(prompt)
-
+        selected_type = self.view.type_menu.currentText()
+        full_prompt = (
+            f"You are a creative D&D game master assistant. Generate detailed, imaginative content.\n"
+            f"Type: {selected_type}\n"
+            f"Request: {prompt}\n\n"
+            f"Provide a well-formatted, ready-to-use result."
+        )
+        result, _, _ = self.ai.ask(full_prompt)
         self._show_output(result)
 
     @catch_and_report_crashes
     def on_save(self):
-        # Implement your saving logic here
+        from PyQt6.QtWidgets import QInputDialog
 
-        self._show_output("[Save functionality not implemented yet]")
+        content = self.view.output_text.toPlainText().strip()
+        if not content:
+            self._show_output("[No content to save — generate something first]")
+            return
+
+        title, ok = QInputDialog.getText(self.view, "Save to Vault", "Note title:")
+        if not ok or not title.strip():
+            return
+        title = title.strip()
+
+        try:
+            note = self.ctx.notes.create_note(
+                vault_id="default",
+                owner_id=getattr(self.ctx, "current_user_id", ""),
+                title=title,
+                content=content,
+            )
+            self._show_output(f"[Saved: {note.title}]")
+        except Exception as exc:
+            self._show_output(f"[Save failed: {exc}]")
 
     def _show_output(self, text: str):
         self.view.output_text.setPlainText(text)
