@@ -72,7 +72,27 @@ export const auth = {
   },
   setup: (email, username, password) =>
     request("POST", "/auth/setup", { email, username, password }),
-  login: (email, password) => request("POST", "/auth/login", { email, password }),
+  login: async (email, password) => {
+    let res;
+    try {
+      res = await fetch(`${BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+    } catch {
+      throw new Error("Cannot connect to MythosEngine server — is it running?");
+    }
+    if (res.status === 401) throw new Error("Invalid email or password");
+    if (res.status === 403) throw new Error("Account is disabled");
+    if (res.status === 429) throw new Error("__RATE_LIMIT__");
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(`Login failed: ${err.detail || "Unknown error"}`);
+    }
+    const data = await res.json();
+    return { token: data.access_token, user: data.user, exp: data.exp };
+  },
   logout: () => request("POST", "/auth/logout"),
   me: () => request("GET", "/auth/me"),
   changePassword: (current, newPw) =>

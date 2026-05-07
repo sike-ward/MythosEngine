@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { toast } from 'sonner';
 import Card from '@/components/Card';
 import Button from '@/components/Button';
 import Input from '@/components/Input';
-import { auth, setToken } from '@/api';
+import { auth, setToken, isRateLimitError, RATE_LIMIT_MSG } from '@/api';
 import { loginSchema, registerSchema } from '@/schemas/auth';
 
 // Must mirror server-side validate_password_strength rules (Item 54)
@@ -21,11 +22,11 @@ export default function Login({ onLogin, needsSetup = false }) {
   const [mode, setMode] = useState(needsSetup ? 'setup' : 'login');
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState('');
+  const [firstRunNotice, setFirstRunNotice] = useState(false);
 
-  // Login form with Zod validation
-  const loginForm = useForm({ resolver: zodResolver(loginSchema) });
-  // Register form with Zod validation
-  const registerForm = useForm({ resolver: zodResolver(registerSchema) });
+  // Validate only on submit/touch so fields don't show errors on mount
+  const loginForm = useForm({ resolver: zodResolver(loginSchema), mode: 'onSubmit' });
+  const registerForm = useForm({ resolver: zodResolver(registerSchema), mode: 'onSubmit' });
 
   // Setup form (first-run admin) — simple controlled state
   const [setupEmail, setSetupEmail] = useState('');
@@ -35,6 +36,12 @@ export default function Login({ onLogin, needsSetup = false }) {
   const [setupConfirm, setSetupConfirm] = useState('');
   const [setupError, setSetupError] = useState('');
 
+  useEffect(() => {
+    auth.status().then(data => {
+      if (data.needs_setup) setFirstRunNotice(true);
+    }).catch(() => {});
+  }, []);
+
   const switchMode = (next) => {
     setMode(next);
     setApiError('');
@@ -43,14 +50,17 @@ export default function Login({ onLogin, needsSetup = false }) {
   };
 
   const handleLogin = loginForm.handleSubmit(async ({ email, password }) => {
-    setApiError('');
     setLoading(true);
     try {
       const data = await auth.login(email, password);
       setToken(data.token);
       onLogin(data.token, data.user, data.exp ?? null);
     } catch (err) {
-      setApiError(err.message || 'Login failed');
+      if (isRateLimitError(err)) {
+        toast.error(RATE_LIMIT_MSG);
+      } else {
+        toast.error(err.message || 'Login failed');
+      }
     } finally {
       setLoading(false);
     }
@@ -171,7 +181,20 @@ export default function Login({ onLogin, needsSetup = false }) {
           <>
             <h2 className="text-xl font-bold text-txt mb-2">Welcome back</h2>
             <p className="text-txt-secondary text-sm mb-6">Sign in to your account to continue</p>
-            <ApiErrorBox msg={apiError} />
+            {firstRunNotice && (
+              <div className="mb-4 p-3 rounded-lg bg-accent/10 border border-accent/20">
+                <p className="text-sm text-accent">
+                  First run detected.{' '}
+                  <button
+                    type="button"
+                    onClick={() => switchMode('setup')}
+                    className="font-medium underline hover:no-underline"
+                  >
+                    Click here to set up your admin account.
+                  </button>
+                </p>
+              </div>
+            )}
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
                 <Input
