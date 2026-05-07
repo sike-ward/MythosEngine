@@ -1,15 +1,19 @@
 import { useState, useRef, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
+import { toast } from 'sonner';
 import SectionHeader from '@/components/SectionHeader';
 import Card from '@/components/Card';
 import Button from '@/components/Button';
 import { TextArea } from '@/components/Input';
-import { ai, notes } from '@/api';
+import { ai, notes, settings, isRateLimitError, RATE_LIMIT_MSG } from '@/api';
 
 const BASE_URL =
   typeof window !== 'undefined' && window.electronAPI
     ? 'http://127.0.0.1:8741'
     : '/api';
+
+const COST_PER_TOKEN = 0.000003;
 
 export default function Chat() {
   const [messages, setMessages] = useState([]);
@@ -19,6 +23,21 @@ export default function Chat() {
   const [sessionTokens, setSessionTokens] = useState(0);
   const [saveStatus, setSaveStatus] = useState('');
   const chatEndRef = useRef(null);
+
+  // Load settings for history limit and default streaming mode
+  const { data: settingsData } = useQuery({
+    queryKey: ['settings'],
+    queryFn: settings.get,
+  });
+
+  const historyLimit = settingsData?.ai_history_limit ?? 10;
+
+  // Initialize streaming mode from saved setting
+  useEffect(() => {
+    if (settingsData?.streaming_enabled !== undefined) {
+      setStreamingMode(Boolean(settingsData.streaming_enabled));
+    }
+  }, [settingsData?.streaming_enabled]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -30,7 +49,9 @@ export default function Chat() {
     if (!prompt.trim() || loading) return;
 
     const userMessage = { id: nextId(), role: 'user', content: prompt };
-    const history = messages.slice(-10).map((m) => ({ role: m.role, content: m.content }));
+    const history = messages
+      .slice(-historyLimit)
+      .map((m) => ({ role: m.role, content: m.content }));
     setMessages((prev) => [...prev, userMessage]);
     setPrompt('');
     setLoading(true);
@@ -57,10 +78,15 @@ export default function Chat() {
         },
       ]);
     } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        { id: nextId(), role: 'error', content: `Error: ${err.message}` },
-      ]);
+      if (isRateLimitError(err)) {
+        toast.error(RATE_LIMIT_MSG);
+        setMessages((prev) => prev.slice(0, -1)); // remove the user message optimistic update
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          { id: nextId(), role: 'error', content: `Error: ${err.message}` },
+        ]);
+      }
     } finally {
       setLoading(false);
     }
@@ -82,10 +108,16 @@ export default function Chat() {
         body: JSON.stringify({ prompt: userPrompt, history }),
       });
 
+      if (res.status === 429) {
+        toast.error(RATE_LIMIT_MSG);
+        setMessages((prev) => prev.filter((m) => m.id !== assistantId).slice(0, -1));
+        return;
+      }
       if (!res.ok) throw new Error(`Stream error: ${res.status}`);
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
+      let streamTokenCount = 0;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -101,6 +133,7 @@ export default function Chat() {
             const parsed = JSON.parse(data);
             if (parsed.error) throw new Error(parsed.error);
             if (parsed.token) {
+              streamTokenCount++;
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === assistantId ? { ...m, content: m.content + parsed.token } : m
@@ -111,6 +144,16 @@ export default function Chat() {
             // ignore parse errors on individual chunks
           }
         }
+      }
+
+      // Update token count for streamed message
+      if (streamTokenCount > 0) {
+        setSessionTokens((prev) => prev + streamTokenCount);
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId ? { ...m, tokens: streamTokenCount } : m
+          )
+        );
       }
     } catch (err) {
       setMessages((prev) =>
@@ -152,6 +195,8 @@ export default function Chat() {
       handleAsk();
     }
   };
+
+  const sessionCost = sessionTokens * COST_PER_TOKEN;
 
   return (
     <div className="p-10 space-y-6 flex flex-col h-full">
@@ -221,9 +266,10 @@ export default function Chat() {
                     <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
                   )}
                 </div>
+                {/* Per-message token count + cost estimate */}
                 {msg.role === 'assistant' && msg.tokens > 0 && (
                   <p className="text-[10px] text-txt-muted mt-0.5 px-1">
-                    {msg.tokens.toLocaleString()} tokens
+                    {msg.tokens.toLocaleString()} tokens · ${(msg.tokens * COST_PER_TOKEN).toFixed(5)}
                   </p>
                 )}
               </div>
@@ -243,10 +289,10 @@ export default function Chat() {
         <div ref={chatEndRef} />
       </div>
 
-      {/* Session token total */}
+      {/* Session token total + cost */}
       {sessionTokens > 0 && (
         <p className="text-xs text-txt-muted text-right -mb-2">
-          Session: {sessionTokens.toLocaleString()} tokens used
+          Session: {sessionTokens.toLocaleString()} tokens · ${sessionCost.toFixed(5)} est.
         </p>
       )}
 

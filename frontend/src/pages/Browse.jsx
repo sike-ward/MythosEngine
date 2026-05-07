@@ -12,7 +12,7 @@ import TagPanel from '@/components/browse/TagPanel';
 import MetaPanel from '@/components/browse/MetaPanel';
 import PermissionsPanel from '@/components/browse/PermissionsPanel';
 import { SkeletonLine } from '@/components/Skeleton';
-import { notes, folders, ai } from '@/api';
+import { notes, folders, ai, isRateLimitError, RATE_LIMIT_MSG } from '@/api';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Browse — Full vault browser (thin orchestrator)
@@ -57,6 +57,10 @@ export default function Browse() {
   const [metaKey, setMetaKey] = useState('');
   const [metaValue, setMetaValue] = useState('');
 
+  // ── AI state ─────────────────────────────────────────────────────────────
+  const [proposedLinks, setProposedLinks] = useState([]);
+  const [summaryResult, setSummaryResult] = useState('');
+
   // ════════════════════════════════════════════════════════════════════════
   // React Query data fetching
   // ════════════════════════════════════════════════════════════════════════
@@ -86,6 +90,12 @@ export default function Browse() {
       setEditContent(selectedNote.content || '');
     }
   }, [selectedNote]);
+
+  // Clear AI state when note changes
+  useEffect(() => {
+    setProposedLinks([]);
+    setSummaryResult('');
+  }, [selectedNoteId]);
 
   // Auto-select note from URL query param
   useEffect(() => {
@@ -159,7 +169,7 @@ export default function Browse() {
 
   const saveNoteMutation = useMutation({
     mutationFn: (data) => notes.update(selectedNoteId, data),
-    onSuccess: (updated) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notes'] });
       queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
       setIsEditing(false);
@@ -275,27 +285,62 @@ export default function Browse() {
     }
   };
 
+  // Fully wired: calls AI, then auto-adds each suggested tag (item 116)
   const handleSuggestTags = async () => {
     if (!selectedNote) return;
     try {
-      const result = await ai.suggestTags(selectedNote.content || selectedNote.title, selectedNote.tags || []);
-      if (result.tags?.length > 0) {
-        toast.success(`Suggested: ${result.tags.join(', ')}`);
-      } else {
+      const result = await ai.suggestTags(
+        selectedNote.content || selectedNote.title,
+        selectedNote.tags || [],
+      );
+      if (!result.tags?.length) {
         toast.success('No new tags suggested');
+        return;
       }
+      // Auto-add all suggested tags
+      for (const tag of result.tags) {
+        await notes.addTag(selectedNote.id, tag);
+      }
+      queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
+      queryClient.invalidateQueries({ queryKey: ['notes'] });
+      toast.success(`Added ${result.tags.length} tag${result.tags.length > 1 ? 's' : ''}: ${result.tags.join(', ')}`);
     } catch (err) {
+      if (isRateLimitError(err)) { toast.error(RATE_LIMIT_MSG); return; }
       toast.error('Tag suggestion failed: ' + err.message);
     }
   };
 
+  // Fully wired: calls AI, shows result inline below editor (item 116)
   const handleSummarize = async () => {
     if (!selectedNote?.content) { toast.error('Note has no content to summarize'); return; }
     try {
       const result = await ai.summarize(selectedNote.content);
-      toast.success('Summary: ' + result.summary.slice(0, 80) + (result.summary.length > 80 ? '…' : ''));
+      setSummaryResult(result.summary);
     } catch (err) {
+      if (isRateLimitError(err)) { toast.error(RATE_LIMIT_MSG); return; }
       toast.error('Summarization failed: ' + err.message);
+    }
+  };
+
+  // Item 109: propose-links handler
+  const handleProposeLinks = async () => {
+    if (!selectedNote) return;
+    const content = isEditing ? editContent : (selectedNote.content || '');
+    if (!content.trim()) { toast.error('Note has no content to analyze'); return; }
+    try {
+      const noteTitles = allNotes
+        .filter((n) => n.id !== selectedNote.id)
+        .map((n) => n.title);
+      const result = await ai.proposeLinks(content, noteTitles);
+      if (!result.links?.length) {
+        toast.success('No link suggestions found');
+        return;
+      }
+      setProposedLinks(result.links);
+      toast.success(`${result.links.length} link suggestion${result.links.length > 1 ? 's' : ''} — click a chip to insert`);
+    } catch (err) {
+      if (isRateLimitError(err)) { toast.error(RATE_LIMIT_MSG); return; }
+      toast.error('Link suggestion failed: ' + err.message);
     }
   };
 
@@ -449,6 +494,11 @@ export default function Browse() {
           onDelete={handleDelete}
           onSummarize={handleSummarize}
           onSuggestTags={handleSuggestTags}
+          onSuggestLinks={handleProposeLinks}
+          proposedLinks={proposedLinks}
+          onClearProposedLinks={() => setProposedLinks([])}
+          summaryResult={summaryResult}
+          onClearSummary={() => setSummaryResult('')}
           showMoveDialog={showMoveDialog}
           onToggleMove={setShowMoveDialog}
           onMove={handleMoveNote}

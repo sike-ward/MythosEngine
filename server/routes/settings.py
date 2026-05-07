@@ -3,8 +3,8 @@ Settings routes for MythosEngine FastAPI server.
 
 Endpoints
 ---------
-GET /settings   — return current app settings (safe subset)
-PUT /settings   — update settings
+GET /settings   — return current app settings (safe subset, lowercase keys)
+PUT /settings   — update settings (accepts lowercase or uppercase keys)
 """
 
 from typing import Any, Dict
@@ -20,7 +20,7 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 # Keys that must never be returned to the client
 _SENSITIVE_KEYS = {"OPENAI_API_KEY"}
 
-# Keys that clients are allowed to update
+# Keys that clients are allowed to update (uppercase canonical form)
 _MUTABLE_KEYS = {
     "THEME",
     "FONT_SIZE",
@@ -31,6 +31,9 @@ _MUTABLE_KEYS = {
     "EMBEDDING_MODEL",
     "MAX_TOKENS",
     "LOG_LEVEL",
+    "PREFERRED_MODEL",
+    "STREAMING_ENABLED",
+    "AI_HISTORY_LIMIT",
 }
 
 
@@ -39,11 +42,9 @@ def get_settings(
     ctx: AppContext = Depends(get_ctx),
     _user: User = Depends(get_current_user),
 ):
-    """Return the current settings, excluding sensitive values."""
-    raw: Dict[str, Any] = ctx.config._data.copy()
-    for key in _SENSITIVE_KEYS:
-        raw.pop(key, None)
-    # Mask the API key presence rather than its value
+    """Return current settings as lowercase keys, excluding sensitive values."""
+    raw: Dict[str, Any] = {k.lower(): v for k, v in ctx.config._data.copy().items()}
+    raw.pop("openai_api_key", None)
     raw["has_api_key"] = bool(getattr(ctx.config, "OPENAI_API_KEY", ""))
     return raw
 
@@ -54,8 +55,12 @@ def update_settings(
     ctx: AppContext = Depends(get_ctx),
     _user: User = Depends(get_current_user),
 ):
-    """Update allowed settings fields."""
+    """Update allowed settings fields. Accepts lowercase or uppercase keys."""
     for key, value in body.items():
-        if key in _MUTABLE_KEYS:
-            setattr(ctx.config, key, value)
+        upper_key = key.upper()
+        if upper_key in _MUTABLE_KEYS:
+            try:
+                setattr(ctx.config, upper_key, value)
+            except AttributeError:
+                pass
     return get_settings(ctx=ctx, _user=_user)

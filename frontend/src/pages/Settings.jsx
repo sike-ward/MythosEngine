@@ -23,8 +23,10 @@ export default function Settings({ user }) {
 
   // AI Settings
   const [apiKey, setApiKey] = useState('');
-  const [model, setModel] = useState('gpt-4');
+  const [preferredModel, setPreferredModel] = useState('gpt-4o');
   const [maxTokens, setMaxTokens] = useState('2048');
+  const [streamingEnabled, setStreamingEnabled] = useState(true);
+  const [aiHistoryLimit, setAiHistoryLimit] = useState(10);
 
   // Campaign
   const [vaultPath, setVaultPath] = useState('/vault');
@@ -43,10 +45,15 @@ export default function Settings({ user }) {
     if (settingsData.font_size) setFontSize(settingsData.font_size.toLowerCase());
     if (settingsData.autosave !== undefined) setAutosave(settingsData.autosave);
     if (settingsData.vault_path) setVaultPath(settingsData.vault_path);
-    if (settingsData.completion_model) setModel(settingsData.completion_model);
+    if (settingsData.preferred_model) setPreferredModel(settingsData.preferred_model);
+    if (settingsData.completion_model && !settingsData.preferred_model) {
+      setPreferredModel(settingsData.completion_model);
+    }
     if (settingsData.max_tokens) setMaxTokens(String(settingsData.max_tokens));
     if (settingsData.api_key) setApiKey(settingsData.api_key);
     if (settingsData.campaign_api_key) setCampaignApiKey(settingsData.campaign_api_key);
+    if (settingsData.streaming_enabled !== undefined) setStreamingEnabled(Boolean(settingsData.streaming_enabled));
+    if (settingsData.ai_history_limit !== undefined) setAiHistoryLimit(Number(settingsData.ai_history_limit));
   }, [settingsData]);
 
   const handleSaveAppSettings = async () => {
@@ -61,9 +68,12 @@ export default function Settings({ user }) {
   const handleSaveAI = async () => {
     try {
       await settings.update({
-        completion_model: model,
+        preferred_model: preferredModel,
+        completion_model: preferredModel,
         max_tokens: parseInt(maxTokens, 10) || 2048,
         api_key: apiKey || undefined,
+        streaming_enabled: streamingEnabled,
+        ai_history_limit: Number(aiHistoryLimit),
       });
       toast.success('AI settings saved');
     } catch {
@@ -123,8 +133,10 @@ export default function Settings({ user }) {
           {activeTab === 'ai' && (
             <AISettings
               apiKey={apiKey} setApiKey={setApiKey}
-              model={model} setModel={setModel}
+              preferredModel={preferredModel} setPreferredModel={setPreferredModel}
               maxTokens={maxTokens} setMaxTokens={setMaxTokens}
+              streamingEnabled={streamingEnabled} setStreamingEnabled={setStreamingEnabled}
+              aiHistoryLimit={aiHistoryLimit} setAiHistoryLimit={setAiHistoryLimit}
               onSave={handleSaveAI}
             />
           )}
