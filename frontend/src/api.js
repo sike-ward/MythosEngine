@@ -33,6 +33,9 @@ async function request(method, path, body = null) {
     window.dispatchEvent(new CustomEvent('auth:logout'));
     throw new Error("Session expired");
   }
+  if (res.status === 429) {
+    throw new Error("__RATE_LIMIT__");
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || "Request failed");
@@ -49,6 +52,9 @@ async function requestText(method, path) {
     setToken(null);
     window.location.hash = "#/login";
     throw new Error("Session expired");
+  }
+  if (res.status === 429) {
+    throw new Error("__RATE_LIMIT__");
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -80,7 +86,6 @@ export const auth = {
 
 // ── Notes ────────────────────────────────────────────────────────────────────
 export const notes = {
-  // List & search
   list: (folder = "", tag = "") => {
     const params = new URLSearchParams();
     if (folder) params.set("folder", folder);
@@ -101,24 +106,20 @@ export const notes = {
     return request("GET", `/notes/search?${params.toString()}`);
   },
 
-  // CRUD
   create: (title, content = "", folder_id = null, tags = [], meta = {}) =>
     request("POST", "/notes", { title, content, folder_id, tags, meta }),
   update: (id, data) =>
     request("PUT", `/notes/${encodeURIComponent(id)}`, data),
   delete: (id) => request("DELETE", `/notes/${encodeURIComponent(id)}`),
 
-  // Move
   move: (note_id, dest_folder_id) =>
     request("POST", "/notes/move", { note_id, dest_folder_id }),
 
-  // Tags
   addTag: (id, tag) =>
     request("POST", `/notes/${encodeURIComponent(id)}/tags`, { tag }),
   removeTag: (id, tag) =>
     request("DELETE", `/notes/${encodeURIComponent(id)}/tags/${encodeURIComponent(tag)}`),
 
-  // Metadata
   updateMeta: (id, meta) =>
     request("PUT", `/notes/${encodeURIComponent(id)}/meta`, { meta }),
 };
@@ -138,7 +139,11 @@ export const folders = {
 export const ai = {
   ask: (prompt, history = []) => request("POST", "/ai/ask", { prompt, history }),
   summarize: (text) => request("POST", "/ai/summarize", { text }),
-  suggestTags: (text) => request("POST", "/ai/suggest-tags", { text }),
+  suggestTags: (text, existingTags = []) =>
+    request("POST", "/ai/suggest-tags", { text, existing_tags: existingTags }),
+  proposeLinks: (text, noteNames = []) =>
+    request("POST", "/ai/propose-links", { text, note_names: noteNames }),
+  usage: () => request("GET", "/ai/usage"),
 };
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
@@ -171,6 +176,45 @@ export const invites = {
   revoke: (id) => request("DELETE", `/invites/${id}`),
 };
 
+// ── Sessions ─────────────────────────────────────────────────────────────────
+export const sessions = {
+  list: (vaultId, skip = 0, limit = 50) => {
+    const params = new URLSearchParams({ vault_id: vaultId, skip, limit });
+    return request("GET", `/sessions?${params.toString()}`);
+  },
+  get: (id) => request("GET", `/sessions/${encodeURIComponent(id)}`),
+  create: (data) => request("POST", "/sessions", data),
+  update: (id, data) => request("PUT", `/sessions/${encodeURIComponent(id)}`, data),
+  delete: (id) => request("DELETE", `/sessions/${encodeURIComponent(id)}`),
+  generateRecap: (id) => request("POST", `/sessions/${encodeURIComponent(id)}/recap`),
+};
+
+// ── Characters ────────────────────────────────────────────────────────────────
+export const characters = {
+  list: (vaultId = "default", type = null) => {
+    const params = new URLSearchParams({ vault_id: vaultId });
+    if (type) params.set("type", type);
+    return request("GET", `/characters?${params}`);
+  },
+  get: (id) => request("GET", `/characters/${id}`),
+  create: (data) => request("POST", "/characters", data),
+  update: (id, data) => request("PUT", `/characters/${id}`, data),
+  delete: (id) => request("DELETE", `/characters/${id}`),
+};
+
+// ── Maps ─────────────────────────────────────────────────────────────────────
+export const maps = {
+  list: (vault_id = "default", type = null) => {
+    const params = new URLSearchParams({ vault_id });
+    if (type) params.set("type", type);
+    return request("GET", `/maps?${params.toString()}`);
+  },
+  get: (id) => request("GET", `/maps/${encodeURIComponent(id)}`),
+  create: (data) => request("POST", "/maps", data),
+  update: (id, data) => request("PUT", `/maps/${encodeURIComponent(id)}`, data),
+  delete: (id) => request("DELETE", `/maps/${encodeURIComponent(id)}`),
+};
+
 // ── Debug (admin) ─────────────────────────────────────────────────────────────
 export const debug = {
   listCrashLogs: () => request("GET", "/debug/crash-logs"),
@@ -178,3 +222,10 @@ export const debug = {
   deleteCrashLog: (filename) => request("DELETE", `/debug/crash-logs/${encodeURIComponent(filename)}`),
   getRuntimeLog: () => request("GET", "/debug/runtime-log"),
 };
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+export function isRateLimitError(err) {
+  return err?.message === "__RATE_LIMIT__";
+}
+
+export const RATE_LIMIT_MSG = "Rate limit reached — please wait a moment before trying again.";

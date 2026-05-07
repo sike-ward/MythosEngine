@@ -21,13 +21,14 @@ import json
 import logging
 import re
 import shutil
+import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
-from sqlalchemy import Boolean, DateTime, Index, String, Text, create_engine, select
+from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from MythosEngine.core.event_bus import get_event_bus
@@ -172,6 +173,28 @@ class SessionRecord(Base):
     data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
 
 
+class SessionLogRecord(Base):
+    """ORM model for D&D session log — normalized columns for queryability."""
+
+    __tablename__ = "session_logs"
+    __table_args__ = (Index("ix_session_logs_vault_id", "vault_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    vault_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    session_date: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="")
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")
+    raw_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")
+    ai_recap: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")
+    participants: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True, default="")
+    xp_gained: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    loot_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")
+    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, onupdate=datetime.utcnow)
+    owner_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, default="")
+
+
 class StarredRecord(Base):
     """Store starred/favorite note IDs (one JSON blob with the entire set)."""
 
@@ -198,6 +221,26 @@ class RelationshipRecord(Base):
 
     source_path: Mapped[str] = mapped_column(String(1024), primary_key=True)
     target_path: Mapped[str] = mapped_column(String(1024), primary_key=True)
+
+
+def _session_log_to_dict(record: SessionLogRecord) -> dict:
+    """Convert a SessionLogRecord ORM row to a plain dict."""
+    return {
+        "id": record.id,
+        "vault_id": record.vault_id or "",
+        "title": record.title or "",
+        "session_date": record.session_date or "",
+        "summary": record.summary or "",
+        "raw_notes": record.raw_notes or "",
+        "ai_recap": record.ai_recap or "",
+        "participants": record.participants or "",
+        "xp_gained": record.xp_gained or 0,
+        "loot_notes": record.loot_notes or "",
+        "is_deleted": bool(record.is_deleted),
+        "created_at": record.created_at.isoformat() if record.created_at else None,
+        "updated_at": record.updated_at.isoformat() if record.updated_at else None,
+        "owner_id": record.owner_id or "",
+    }
 
 
 # ============================================================================
@@ -765,6 +808,40 @@ class SQLiteBackend(StorageBackend):
             session.query(CharacterRecord).filter(CharacterRecord.id == character_id).delete()
             session.commit()
 
+    def list_characters(self, vault_id: str = "", char_type: Optional[str] = None) -> List[Character]:
+        """List non-deleted characters, optionally filtered by vault_id and char_type ('player'|'npc')."""
+        results: List[Character] = []
+        with self._session() as session:
+            for rec in session.query(CharacterRecord).all():
+                try:
+                    char = Character.model_validate_json(rec.data)
+                    if getattr(char, "is_deleted", False):
+                        continue
+                    if vault_id and getattr(char, "vault_id", "") != vault_id:
+                        continue
+                    if char_type == "npc" and not getattr(char, "is_npc", False):
+                        continue
+                    if char_type == "player" and getattr(char, "is_npc", False):
+                        continue
+                    results.append(char)
+                except Exception:
+                    continue
+        return results
+
+    def soft_delete_character(self, character_id: str) -> None:
+        """Soft-delete a character by setting is_deleted=True in the JSON blob."""
+        with self._session() as session:
+            record = session.query(CharacterRecord).filter(CharacterRecord.id == character_id).first()
+            if record:
+                try:
+                    char = Character.model_validate_json(record.data)
+                    char.is_deleted = True
+                    char.last_modified = datetime.utcnow()
+                    record.data = char.model_dump_json()
+                    session.commit()
+                except Exception:
+                    pass
+
     def save_map(self, map_obj: Map) -> None:
         """Save or update a Map record."""
         with self._session() as session:
@@ -789,6 +866,35 @@ class SQLiteBackend(StorageBackend):
         with self._session() as session:
             session.query(MapRecord).filter(MapRecord.id == map_id).delete()
             session.commit()
+
+    def list_maps(self, vault_id: str, map_type: Optional[str] = None) -> List[Map]:
+        """Return all non-deleted Maps for a vault, optionally filtered by map_type."""
+        results: List[Map] = []
+        with self._session() as session:
+            for record in session.query(MapRecord).all():
+                try:
+                    map_obj = Map.model_validate_json(record.data)
+                    if map_obj.is_deleted:
+                        continue
+                    if map_obj.vault_id != vault_id:
+                        continue
+                    if map_type and map_obj.map_type != map_type:
+                        continue
+                    results.append(map_obj)
+                except Exception:
+                    continue
+        return results
+
+    def soft_delete_map(self, map_id: str) -> None:
+        """Soft-delete a map by setting is_deleted=True in its JSON blob."""
+        with self._session() as session:
+            record = session.query(MapRecord).filter(MapRecord.id == map_id).first()
+            if record:
+                map_obj = Map.model_validate_json(record.data)
+                map_obj.is_deleted = True
+                map_obj.last_modified = datetime.utcnow()
+                record.data = map_obj.model_dump_json()
+                session.commit()
 
     def save_image(self, image: Image) -> None:
         """Save or update an Image record."""
@@ -864,6 +970,88 @@ class SQLiteBackend(StorageBackend):
         with self._session() as session:
             session.query(SessionRecord).filter(SessionRecord.id == session_id).delete()
             session.commit()
+
+    # ========================================================================
+    # Session Logs (D&D campaign session records)
+    # ========================================================================
+
+    def list_session_logs(
+        self, vault_id: str, skip: int = 0, limit: int = 50
+    ) -> Tuple[List[dict], int]:
+        """Return non-deleted session logs for a vault, sorted by session_date desc."""
+        with self._session() as session:
+            q = (
+                session.query(SessionLogRecord)
+                .filter(
+                    SessionLogRecord.vault_id == vault_id,
+                    SessionLogRecord.is_deleted == False,  # noqa: E712
+                )
+                .order_by(SessionLogRecord.session_date.desc())
+            )
+            total = q.count()
+            records = q.offset(skip).limit(limit).all()
+            items = [_session_log_to_dict(r) for r in records]
+        return items, total
+
+    def get_session_log(self, session_id: str) -> Optional[dict]:
+        """Return a single session log by ID, or None if not found/deleted."""
+        with self._session() as session:
+            record = (
+                session.query(SessionLogRecord)
+                .filter(
+                    SessionLogRecord.id == session_id,
+                    SessionLogRecord.is_deleted == False,  # noqa: E712
+                )
+                .first()
+            )
+            if record:
+                return _session_log_to_dict(record)
+        return None
+
+    def save_session_log(self, data: dict) -> str:
+        """Create or partially-update a session log; returns the record's id."""
+        session_id = data.get("id") or str(uuid.uuid4())
+        now = datetime.utcnow()
+        updatable = [
+            "title", "session_date", "summary", "raw_notes",
+            "ai_recap", "participants", "xp_gained", "loot_notes",
+        ]
+        with self._session() as session:
+            record = session.query(SessionLogRecord).filter(SessionLogRecord.id == session_id).first()
+            if record:
+                for field in updatable:
+                    if field in data:
+                        setattr(record, field, data[field])
+                record.updated_at = now
+            else:
+                record = SessionLogRecord(
+                    id=session_id,
+                    vault_id=data.get("vault_id", ""),
+                    title=data.get("title", ""),
+                    session_date=data.get("session_date", ""),
+                    summary=data.get("summary", ""),
+                    raw_notes=data.get("raw_notes", ""),
+                    ai_recap=data.get("ai_recap", ""),
+                    participants=data.get("participants", ""),
+                    xp_gained=data.get("xp_gained", 0),
+                    loot_notes=data.get("loot_notes", ""),
+                    is_deleted=False,
+                    created_at=now,
+                    updated_at=now,
+                    owner_id=data.get("owner_id", ""),
+                )
+                session.add(record)
+            session.commit()
+        return session_id
+
+    def soft_delete_session_log(self, session_id: str) -> None:
+        """Soft-delete a session log by setting is_deleted=True."""
+        with self._session() as session:
+            record = session.query(SessionLogRecord).filter(SessionLogRecord.id == session_id).first()
+            if record:
+                record.is_deleted = True
+                record.updated_at = datetime.utcnow()
+                session.commit()
 
     # ========================================================================
     # Starred/Favorites

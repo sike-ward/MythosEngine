@@ -1,20 +1,26 @@
 """
 AI endpoints.
 
-GET  /ai/status       — readiness check (always available, no auth required)
-POST /ai/ask          — ask the AI a question with vault context
-POST /ai/ask/stream   — streaming SSE version of ask
-POST /ai/summarize    — summarize text
-POST /ai/suggest-tags — suggest tags for text
+GET  /ai/status          — readiness check (no auth required)
+POST /ai/ask             — ask the AI a question with vault context
+POST /ai/ask/stream      — streaming SSE version of ask
+POST /ai/summarize       — summarize text
+POST /ai/suggest-tags    — suggest tags for text
+POST /ai/propose-links   — propose internal wiki links for a note
+GET  /ai/usage           — current-month token usage for the logged-in user
 """
 
 import json
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
+from MythosEngine.ai.cost_tracker import AIUsageRecord
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
 
@@ -31,40 +37,45 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 
 
 class AskRequest(BaseModel):
-    """Request body for POST /ai/ask"""
     prompt: str
     vault_id: Optional[str] = None
     history: Optional[list[dict]] = None
 
 
 class AskResponse(BaseModel):
-    """Response body for POST /ai/ask"""
     response: str
     prompt_tokens: int
     completion_tokens: int
 
 
 class SummarizeRequest(BaseModel):
-    """Request body for POST /ai/summarize"""
     text: str
 
 
 class SummarizeResponse(BaseModel):
-    """Response body for POST /ai/summarize"""
     summary: str
     prompt_tokens: int
     completion_tokens: int
 
 
 class SuggestTagsRequest(BaseModel):
-    """Request body for POST /ai/suggest-tags"""
     text: str
     existing_tags: list[str] = Field(default_factory=list)
 
 
 class SuggestTagsResponse(BaseModel):
-    """Response body for POST /ai/suggest-tags"""
     tags: list[str]
+    prompt_tokens: int
+    completion_tokens: int
+
+
+class ProposeLinksRequest(BaseModel):
+    text: str
+    note_names: list[str] = Field(default_factory=list)
+
+
+class ProposeLinksResponse(BaseModel):
+    links: list[str]
     prompt_tokens: int
     completion_tokens: int
 
@@ -72,15 +83,6 @@ class SuggestTagsResponse(BaseModel):
 # ============================================================================
 # Helpers
 # ============================================================================
-
-
-def require_index_ready(ctx: AppContext = Depends(get_ctx)) -> None:
-    """Raise 503 if the AI vector index is still being built."""
-    if not getattr(ctx.ai, "_index_ready", False):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI index is still building. Try again shortly.",
-        )
 
 
 def _build_prompt_with_history(prompt: str, history: Optional[list[dict]]) -> str:
@@ -95,8 +97,31 @@ def _build_prompt_with_history(prompt: str, history: Optional[list[dict]]) -> st
     return "Previous conversation:\n" + "\n".join(lines) + f"\n\nUser: {prompt}"
 
 
+def _apply_preferred_model(ctx: AppContext) -> None:
+    """Apply PREFERRED_MODEL from config to the AI engine if available."""
+    preferred = getattr(ctx.config, "PREFERRED_MODEL", "") or ""
+    if not preferred or not ctx.has_ai():
+        return
+    try:
+        if hasattr(ctx.ai, "update_models"):
+            embedding = getattr(ctx.config, "EMBEDDING_MODEL", "text-embedding-3-small")
+            ctx.ai.update_models(embedding_model=embedding, completion_model=preferred)
+    except Exception:
+        pass
+
+
+def _parse_comma_list(raw: str) -> list[str]:
+    """Split a comma/newline-separated AI response into a clean list."""
+    items = []
+    for part in raw.replace("\n", ",").split(","):
+        cleaned = part.strip().strip('"').strip("'").strip("*").strip("-").strip()
+        if cleaned:
+            items.append(cleaned)
+    return items
+
+
 # ============================================================================
-# AI endpoints
+# Endpoints
 # ============================================================================
 
 
@@ -108,6 +133,39 @@ async def ai_status(ctx: AppContext = Depends(get_ctx)):
     }
 
 
+@router.get("/usage")
+async def ai_usage(
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Return the current-month AI usage summary for the logged-in user."""
+    ct = ctx.cost_tracker
+    if ct is None:
+        return {"total_requests": 0, "total_tokens": 0, "estimated_cost": 0.0}
+
+    now = datetime.utcnow()
+    start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    try:
+        with Session(ct.engine) as session:
+            rows = session.scalars(
+                select(AIUsageRecord).where(
+                    AIUsageRecord.user_id == str(user.id),
+                    AIUsageRecord.timestamp >= start_of_month,
+                )
+            ).all()
+    except Exception:
+        return {"total_requests": 0, "total_tokens": 0, "estimated_cost": 0.0}
+
+    total_tokens = sum(r.total_tokens for r in rows)
+    total_cost = sum(r.cost_usd for r in rows)
+    return {
+        "total_requests": len(rows),
+        "total_tokens": total_tokens,
+        "estimated_cost": round(total_cost, 6),
+    }
+
+
 @router.post("/ask", response_model=AskResponse)
 @limiter.limit("20/minute")
 async def ask(
@@ -116,17 +174,15 @@ async def ask(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """
-    Ask the AI a question, optionally with vault context and conversation history.
-
-    Requires authentication and an AI engine (optional).
-    """
+    """Ask the AI with optional conversation history. Applies PREFERRED_MODEL if set."""
     try:
         if not ctx.has_ai():
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="AI engine not available",
             )
+
+        _apply_preferred_model(ctx)
 
         ai = ctx.require_ai()
         full_prompt = _build_prompt_with_history(req.prompt, req.history)
@@ -152,14 +208,14 @@ async def stream_ask(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """
-    Streaming SSE version of /ai/ask. Yields tokens word-by-word as data events.
-    """
+    """Streaming SSE version of /ai/ask. Yields tokens word-by-word."""
     async def generate():
         try:
             if not ctx.has_ai():
                 yield f"data: {json.dumps({'error': 'AI engine not available'})}\n\n"
                 return
+
+            _apply_preferred_model(ctx)
 
             ai = ctx.require_ai()
             full_prompt = _build_prompt_with_history(req.prompt, req.history)
@@ -185,11 +241,7 @@ async def summarize(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """
-    Summarize the provided text using the AI engine.
-
-    Requires authentication and an AI engine (optional).
-    """
+    """Summarize the provided text."""
     try:
         if not ctx.has_ai():
             raise HTTPException(
@@ -222,13 +274,7 @@ async def suggest_tags(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """
-    Suggest tags for text using the AI engine.
-
-    Optionally pass existing_tags to avoid duplicates and maintain consistency.
-
-    Requires authentication and an AI engine (optional).
-    """
+    """Suggest tags for text, filtering out existing ones."""
     try:
         if not ctx.has_ai():
             raise HTTPException(
@@ -237,11 +283,14 @@ async def suggest_tags(
             )
 
         ai = ctx.require_ai()
-        tags, prompt_tokens, completion_tokens = ai.suggest_tags(req.text)
+        raw_tags, prompt_tokens, completion_tokens = ai.suggest_tags(req.text)
+
+        # AI returns comma-separated string — parse to list
+        tags = _parse_comma_list(raw_tags) if isinstance(raw_tags, str) else list(raw_tags)
 
         if req.existing_tags:
-            existing_lower = {tag.lower() for tag in req.existing_tags}
-            tags = [tag for tag in tags if tag.lower() not in existing_lower]
+            existing_lower = {t.lower() for t in req.existing_tags}
+            tags = [t for t in tags if t.lower() not in existing_lower]
 
         return SuggestTagsResponse(
             tags=tags,
@@ -254,4 +303,62 @@ async def suggest_tags(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Tag suggestion failed: {str(e)}",
+        )
+
+
+@router.post("/propose-links", response_model=ProposeLinksResponse)
+@limiter.limit("20/minute")
+async def propose_links(
+    request: Request,
+    req: ProposeLinksRequest,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Suggest internal [[wiki links]] for the given note content."""
+    try:
+        if not ctx.has_ai():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="AI engine not available",
+            )
+
+        ai = ctx.require_ai()
+        raw_links, prompt_tokens, completion_tokens = ai.propose_links(
+            req.text, req.note_names
+        )
+
+        links = _parse_comma_list(raw_links) if isinstance(raw_links, str) else list(raw_links)
+
+        # Only keep links that match one of the provided note names (case-insensitive)
+        if req.note_names:
+            names_lower = {n.lower(): n for n in req.note_names}
+            filtered = []
+            for link in links:
+                match = names_lower.get(link.lower())
+                if match:
+                    filtered.append(match)
+                else:
+                    # Include even if not exact match — AI may abbreviate
+                    filtered.append(link)
+            links = filtered
+
+        # Deduplicate
+        seen = set()
+        unique_links = []
+        for l in links:
+            if l.lower() not in seen:
+                seen.add(l.lower())
+                unique_links.append(l)
+
+        return ProposeLinksResponse(
+            links=unique_links,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Link proposal failed: {str(e)}",
         )
