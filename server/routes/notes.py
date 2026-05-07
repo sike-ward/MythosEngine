@@ -27,7 +27,7 @@ from typing import Optional, List, Dict
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
@@ -78,34 +78,35 @@ class NoteDetail(BaseModel):
 
 class CreateNoteRequest(BaseModel):
     """Request body for POST /notes"""
-    title: str
-    content: str = ""
-    folder_id: Optional[str] = None
-    tags: List[str] = []
+    title: str = Field(..., min_length=1, max_length=200)
+    content: str = Field("", max_length=500_000)
+    folder_id: Optional[str] = Field(None, max_length=200)
+    tags: List[str] = Field(default_factory=list, max_length=50)
     meta: Dict[str, str] = {}
+    vault_id: str = Field("default", max_length=100)
 
 
 class UpdateNoteRequest(BaseModel):
     """Request body for PUT /notes/{id}"""
-    title: Optional[str] = None
-    content: Optional[str] = None
-    tags: Optional[List[str]] = None
-    folder_id: Optional[str] = "__UNSET__"   # sentinel: None means "remove from folder"
+    title: Optional[str] = Field(None, max_length=200)
+    content: Optional[str] = Field(None, max_length=500_000)
+    tags: Optional[List[str]] = Field(None, max_length=50)
+    folder_id: Optional[str] = Field("__UNSET__", max_length=200)  # sentinel: None means "remove from folder"
     meta: Optional[Dict[str, str]] = None
     permissions: Optional[Dict[str, str]] = None
     links: Optional[List[str]] = None
-    group_id: Optional[str] = "__UNSET__"
+    group_id: Optional[str] = Field("__UNSET__", max_length=100)
 
 
 class MoveNoteRequest(BaseModel):
     """Request body for POST /notes/move"""
-    note_id: str
-    dest_folder_id: Optional[str] = None
+    note_id: str = Field(..., max_length=200)
+    dest_folder_id: Optional[str] = Field(None, max_length=200)
 
 
 class TagRequest(BaseModel):
     """Request body for POST /notes/{id}/tags"""
-    tag: str
+    tag: str = Field(..., min_length=1, max_length=50)
 
 
 class MetaUpdateRequest(BaseModel):
@@ -115,14 +116,14 @@ class MetaUpdateRequest(BaseModel):
 
 class CreateFolderRequest(BaseModel):
     """Request body for POST /notes/folders"""
-    name: str
-    parent_id: Optional[str] = None
+    name: str = Field(..., min_length=1, max_length=200)
+    parent_id: Optional[str] = Field(None, max_length=100)
 
 
 class UpdateFolderRequest(BaseModel):
     """Request body for PUT /notes/folders/{id}"""
-    name: Optional[str] = None
-    description: Optional[str] = None
+    name: Optional[str] = Field(None, max_length=200)
+    description: Optional[str] = Field(None, max_length=1000)
 
 
 class FolderResponse(BaseModel):
@@ -230,6 +231,8 @@ def _get_note_or_404(ctx, note_id):
 @router.get("/search")
 async def search_notes(
     q: str = Query(..., min_length=1, description="Search query"),
+    skip: int = Query(0, ge=0, description="Offset for pagination"),
+    limit: int = Query(50, ge=1, le=200, description="Max results to return"),
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
@@ -240,10 +243,15 @@ async def search_notes(
             is_admin="admin" in (user.roles or []),
             is_gm="gm" in (user.roles or []),
         )
-        results = ctx.storage.search_notes(q, top_k=50)
+        all_results = ctx.storage.search_notes(q, top_k=10000)
+        all_results = [n for n in all_results if not getattr(n, "is_deleted", False)]
+        total = len(all_results)
+        page = all_results[skip : skip + limit]
         return {
-            "results": [_note_to_list_item(n).model_dump() for n in results],
-            "count": len(results),
+            "items": [_note_to_list_item(n).model_dump() for n in page],
+            "total": total,
+            "skip": skip,
+            "limit": limit,
         }
     except Exception as e:
         raise HTTPException(
@@ -307,14 +315,16 @@ async def list_folders(
         )
 
 
-@router.get("/", response_model=List[NoteListItem])
+@router.get("/")
 async def list_notes(
     folder: str = Query("", description="Folder path to list notes from"),
     tag: str = Query("", description="Filter by tag"),
+    skip: int = Query(0, ge=0, description="Offset for pagination"),
+    limit: int = Query(50, ge=1, le=200, description="Max items to return"),
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """List notes, optionally filtered by folder and/or tag."""
+    """List notes, optionally filtered by folder and/or tag. Returns paginated response."""
     try:
         ctx.storage.set_user_context(
             user.id,
@@ -322,7 +332,7 @@ async def list_notes(
             is_gm="gm" in (user.roles or []),
         )
 
-        all_notes = ctx.storage.search_notes("", top_k=1000)
+        all_notes = ctx.storage.search_notes("", top_k=10000)
 
         # Filter by folder
         if folder:
@@ -345,7 +355,15 @@ async def list_notes(
         # Sort by last_modified descending
         all_notes.sort(key=lambda n: n.last_modified, reverse=True)
 
-        return [_note_to_list_item(n) for n in all_notes]
+        total = len(all_notes)
+        page = all_notes[skip : skip + limit]
+
+        return {
+            "items": [_note_to_list_item(n).model_dump() for n in page],
+            "total": total,
+            "skip": skip,
+            "limit": limit,
+        }
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

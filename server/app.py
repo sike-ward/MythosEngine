@@ -13,13 +13,19 @@ We need a QCoreApplication instance for QObject to work. We create a headless
 one at startup so the existing backend code works without modification.
 """
 
+import logging
 import os
 import sys
+import threading
 from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+
+logger = logging.getLogger(__name__)
 
 # Add parent directory so MythosEngine package is importable
 _parent = Path(__file__).resolve().parent.parent
@@ -38,6 +44,7 @@ except ImportError:
 from MythosEngine.config.config import Config
 from MythosEngine.context.app_context import AppContext
 
+from server.limiter import limiter
 from server.routes import auth, notes, ai, dashboard, users, settings, invites
 
 
@@ -71,6 +78,19 @@ async def lifespan(app: FastAPI):
     """
     ctx = await init_app_context()
     app.state.ctx = ctx
+
+    # Build the AI vector index in a background thread so startup is non-blocking
+    if ctx.has_ai():
+        def _build_index_bg():
+            try:
+                ctx.ai.index_manager.build_index()
+                ctx.ai._index_ready = True
+                logger.info("AI index build complete")
+            except Exception as e:
+                logger.warning("AI index build failed: %s", e)
+
+        threading.Thread(target=_build_index_bg, daemon=True).start()
+
     print("[server] MythosEngine API ready")
     yield
     print("[server] MythosEngine API shutting down")
@@ -86,6 +106,10 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Rate-limiting (slowapi)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS — allow Vite dev server and Electron renderer
 app.add_middleware(
