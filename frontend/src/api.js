@@ -175,6 +175,19 @@ export const characters = {
   delete: (id) => request("DELETE", `/characters/${id}`),
 };
 
+// ── Maps ─────────────────────────────────────────────────────────────────────
+export const maps = {
+  list: (vault_id = "default", type = null) => {
+    const params = new URLSearchParams({ vault_id });
+    if (type) params.set("type", type);
+    return request("GET", `/maps?${params.toString()}`);
+  },
+  get: (id) => request("GET", `/maps/${encodeURIComponent(id)}`),
+  create: (data) => request("POST", "/maps", data),
+  update: (id, data) => request("PUT", `/maps/${encodeURIComponent(id)}`, data),
+  delete: (id) => request("DELETE", `/maps/${encodeURIComponent(id)}`),
+};
+
 // ── Debug (admin) ─────────────────────────────────────────────────────────────
 export const debug = {
   listCrashLogs: () => request("GET", "/debug/crash-logs"),
