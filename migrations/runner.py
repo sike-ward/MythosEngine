@@ -51,9 +51,30 @@ def run_migrations(engine: "Engine") -> None:
         current = ctx.get_current_revision()
 
     if current is None:
-        # Tables were created by create_all() but Alembic has never run.
-        # Stamp to head so the next call only runs truly new migrations.
-        command.stamp(cfg, "head")
+        # No alembic_version row — either a brand-new DB (create_all just ran)
+        # or a legacy DB that predates Alembic.  Distinguish the two cases by
+        # checking whether the users table already has the ``email`` column.
+        #
+        # • Fresh DB  → create_all() built the correct schema; stamp to head so
+        #   Alembic doesn't try to re-apply DDL that is already in place.
+        # • Legacy DB → schema is outdated (email column missing); stamp to the
+        #   revision just before 0004 so that ``upgrade head`` applies only the
+        #   fix migration and not the earlier DDL migrations (which would
+        #   conflict with tables already created by create_all).
+        try:
+            with engine.connect() as conn:
+                rows = conn.execute(text("PRAGMA table_info(users)")).fetchall()
+                has_email_col = any(row[1] == "email" for row in rows)
+        except Exception:
+            has_email_col = True  # Cannot inspect; treat as fresh and stamp.
+
+        if has_email_col:
+            command.stamp(cfg, "head")
+        else:
+            # Stamp to 0003 (the revision immediately before the fix migration)
+            # then upgrade so only migration 0004 runs.
+            command.stamp(cfg, "0003")
+            command.upgrade(cfg, "head")
     else:
         command.upgrade(cfg, "head")
 
