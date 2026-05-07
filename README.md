@@ -1,6 +1,6 @@
-# Ward DND AI
+# MythosEngine
 
-An AI-powered assistant for managing your Obsidian D&D vault. Browse notes, ask questions about your lore, generate summaries, suggest tags, and manage characters, maps, timelines, and more — all from a desktop GUI backed by your local Obsidian vault.
+An AI-powered assistant for managing your D&D lore. Browse notes, chat with your world, generate summaries, and manage characters, maps, timelines, and more — via an Electron + React desktop app backed by a FastAPI server.
 
 ---
 
@@ -31,8 +31,15 @@ cp .env.example .env
 ### Run
 
 ```bash
-python Ward_DND_AI\main.py
-# or double-click Launch_Lore_App.bat
+# Start the FastAPI backend
+python MythosEngine/main.py
+# or with uvicorn directly
+uvicorn server.app:app --host 127.0.0.1 --port 8000
+
+# Start the Electron + React frontend (in a second terminal)
+cd frontend && npm start
+
+# Or double-click Launch_MythosEngine.bat (starts both automatically)
 ```
 
 ---
@@ -69,20 +76,23 @@ All other settings live in `Ward_DND_AI/config/settings.json` and can be changed
 ## Project Structure
 
 ```
-Ward_DND_Campaign/
-├── Ward_DND_AI/
+MythosEngine/
+├── MythosEngine/
 │   ├── ai/           # AI engines (OpenAI, LoreAI RAG)
 │   ├── auth/         # PermissionChecker, session management
 │   ├── config/       # Config loader, settings.json, templates
 │   ├── context/      # AppContext — central service locator
-│   ├── gui/          # PyQt6 GUI (controllers + views per tab)
 │   ├── managers/     # Business logic layer (one per model type)
 │   ├── models/       # Pydantic data models
-│   ├── storage/      # StorageBackend interface + HybridStorage
+│   ├── storage/      # StorageBackend interface + SQLite backend
 │   ├── tests/        # pytest test suite
-│   └── utils/        # Crash handler, audit logger, helpers
+│   ├── utils/        # Audit logger, helpers
+│   └── main.py       # uvicorn launcher (entry point)
+├── server/           # FastAPI app, routes, deps
+├── frontend/         # Electron + React + Vite + Tailwind
+├── migrations/       # Alembic migrations
 ├── docs/             # Architecture and operational docs
-├── logs/             # app.log, audit.log, crash logs
+├── logs/             # app.log, audit.log
 ├── .env.example      # Environment variable template
 ├── mypy.ini          # Type checking config
 ├── TECH_DEBT.md      # Known issues and deferred work
@@ -93,13 +103,20 @@ Ward_DND_Campaign/
 
 ## Architecture Overview
 
-The app follows a strict MVC pattern with dependency injection:
+- **Backend**: FastAPI (Python) — `server/` directory, started via `python MythosEngine/main.py` or `uvicorn server.app:app`
+- **Frontend**: Electron + React — `frontend/` directory
+- **Database**: SQLite via SQLAlchemy
+- **AI**: OpenAI GPT-4o (configurable)
 
-- **Models** (`models/`) — Pydantic v2, all inherit from `CoreModel` which provides `id`, `schema_version`, `owner_id`, `created_at`, `last_modified`
-- **Storage** (`storage/`) — `StorageBackend` abstract interface; `HybridStorage` stores notes as markdown and structured data as JSON in `.dnd_meta/`
-- **Managers** (`managers/`) — Business logic; one manager per model type; all take `StorageBackend` via constructor
-- **AppContext** (`context/app_context.py`) — Single service locator passed to every controller; holds config, storage, AI engine, all managers, and permission checker
-- **Controllers/Views** (`gui/`) — PyQt6 MVC; controllers receive `ctx: AppContext` and never touch storage or files directly
+> PyQt6 GUI has been removed as of this commit. The sole UI layer is the Electron + React app.
+
+The backend follows a layered design with dependency injection:
+
+- **Models** (`MythosEngine/models/`) — Pydantic v2
+- **Storage** (`MythosEngine/storage/`) — SQLAlchemy + SQLite
+- **Managers** (`MythosEngine/managers/`) — Business logic; one manager per model type
+- **AppContext** (`MythosEngine/context/app_context.py`) — Central service locator: config, storage, AI engine, managers, permissions
+- **API** (`server/`) — FastAPI routes; all client interaction goes through the REST API
 
 ### Multiuser Design
 
@@ -124,13 +141,10 @@ ruff check .
 ruff format .
 
 # Tests
-pytest Ward_DND_AI/tests/
+pytest MythosEngine/tests/
 
 # Type check
-mypy Ward_DND_AI/models/ Ward_DND_AI/managers/ Ward_DND_AI/storage/
-
-# Export all user data
-python Ward_DND_AI/scripts/export_data.py --output exports/
+mypy MythosEngine/models/ MythosEngine/managers/ MythosEngine/storage/
 ```
 
 Pre-commit hooks run ruff automatically on every commit.
