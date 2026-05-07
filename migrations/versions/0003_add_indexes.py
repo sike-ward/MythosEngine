@@ -1,7 +1,7 @@
 """Add indexes to notes and users tables.
 
 Revision ID: 0003
-Revises: 0002
+Revises: 0002r
 Create Date: 2026-05-07
 
 Indexes added
@@ -19,7 +19,7 @@ from typing import Sequence, Union
 from alembic import op
 
 revision: str = "0003"
-down_revision: Union[str, None] = "0002"
+down_revision: Union[str, None] = "0002r"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
