@@ -16,11 +16,11 @@ try:
 except ImportError:
     PYQT6 = False
 
-RECOVERY_DIR = Path.cwd() / "recovery"
+RECOVERY_DIR = Path(__file__).resolve().parent.parent.parent / "recovery"
 
 RECOVERY_DIR.mkdir(exist_ok=True)
 
-LOG_DIR = Path.cwd() / "logs"
+LOG_DIR = Path(__file__).resolve().parent.parent.parent / "logs"
 
 LOG_DIR.mkdir(exist_ok=True)
 
@@ -541,7 +541,7 @@ class CrashHandler:
 
         msg = EmailMessage()
 
-        msg["Subject"] = "Ward_DND_Campaign Crash Report"
+        msg["Subject"] = "MythosEngine Crash Report"
 
         msg["From"] = USERNAME
 
@@ -706,3 +706,4 @@ def _thread_exception_handler(args):
 
 if hasattr(threading, "excepthook"):
     threading.excepthook_orig = threading.excepthook
+    threading.excepthook = _thread_exception_handler

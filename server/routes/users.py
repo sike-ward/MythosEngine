@@ -13,8 +13,11 @@ UserRecord table directly through the storage engine.
 """
 
 import json
+import logging
 from datetime import datetime
 from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
@@ -83,10 +86,10 @@ def _list_all_users(ctx: AppContext) -> List[User]:
                     try:
                         user = User.model_validate_json(rec.data)
                         users.append(user)
-                    except Exception:
-                        pass
-    except Exception:
-        pass
+                    except Exception as exc:
+                        logger.warning("_list_all_users: skipping corrupt user record: %s", exc)
+    except Exception as exc:
+        logger.error("_list_all_users: database query failed: %s", exc)
     return users
 
 

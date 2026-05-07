@@ -1,26 +1,56 @@
-from MythosEngine.gui.random_generator.controller_random_generator import (
-    RandomGeneratorController,
-)
-from MythosEngine.gui.random_generator.view_random_generator import RandomGeneratorView
+import pytest
+from unittest.mock import MagicMock
 
 
 class DummyAI:
-    def generate_random(self, prompt):
-        return f"RANDOM:{prompt}"
+    def ask(self, prompt):
+        return (f"RESULT:{prompt}", 10, 5)
 
 
-def test_random_generator_empty_prompts(tk_root, config, storage):
-    view = RandomGeneratorView(tk_root, config)
-    ctrl = RandomGeneratorController(view, DummyAI(), storage, config)
-    view.prompt_entry.delete(0, "end")
+class DummyCtx:
+    def __init__(self):
+        self.ai = DummyAI()
+        self.storage = MagicMock()
+        self.config = MagicMock()
+        note_mock = MagicMock()
+        note_mock.title = "Test Note"
+        notes_mock = MagicMock()
+        notes_mock.create_note.return_value = note_mock
+        self.notes = notes_mock
+        self.current_user_id = "test-user"
+
+
+@pytest.fixture
+def qapp():
+    from PyQt6.QtWidgets import QApplication
+    import sys
+    app = QApplication.instance() or QApplication(sys.argv)
+    yield app
+
+
+def test_random_generator_empty_prompt(qapp):
+    from MythosEngine.gui.create.random_generator.view_random_generator import RandomGeneratorView
+    from MythosEngine.gui.create.random_generator.controller_random_generator import RandomGeneratorController
+
+    view = RandomGeneratorView(None, MagicMock())
+    ctx = DummyCtx()
+    ctrl = RandomGeneratorController(view, ctx)
+
+    view.prompt_entry.setText("")
     ctrl.on_generate()
-    assert "Please enter a prompt" in view.output_text.get("1.0", "end")
+    assert "Please enter a prompt" in view.output_text.toPlainText()
 
 
-def test_random_generator_with_prompt(tk_root, config, storage):
-    view = RandomGeneratorView(tk_root, config)
-    ctrl = RandomGeneratorController(view, DummyAI(), storage, config)
-    view.prompt_entry.delete(0, "end")
-    view.prompt_entry.insert(0, "abc")
+def test_random_generator_with_prompt(qapp):
+    from MythosEngine.gui.create.random_generator.view_random_generator import RandomGeneratorView
+    from MythosEngine.gui.create.random_generator.controller_random_generator import RandomGeneratorController
+
+    view = RandomGeneratorView(None, MagicMock())
+    ctx = DummyCtx()
+    ctrl = RandomGeneratorController(view, ctx)
+
+    view.prompt_entry.setText("a dragon")
     ctrl.on_generate()
-    assert "RANDOM:abc" == view.output_text.get("1.0", "end").strip()
+    output = view.output_text.toPlainText()
+    assert "RESULT:" in output
+    assert "a dragon" in output
