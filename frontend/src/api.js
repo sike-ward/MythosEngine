@@ -175,6 +175,19 @@ export const sessions = {
   generateRecap: (id) => request("POST", `/sessions/${encodeURIComponent(id)}/recap`),
 };
 
+// ── Characters ────────────────────────────────────────────────────────────────
+export const characters = {
+  list: (vaultId = "default", type = null) => {
+    const params = new URLSearchParams({ vault_id: vaultId });
+    if (type) params.set("type", type);
+    return request("GET", `/characters?${params}`);
+  },
+  get: (id) => request("GET", `/characters/${id}`),
+  create: (data) => request("POST", "/characters", data),
+  update: (id, data) => request("PUT", `/characters/${id}`, data),
+  delete: (id) => request("DELETE", `/characters/${id}`),
+};
+
 // ── Debug (admin) ─────────────────────────────────────────────────────────────
 export const debug = {
   listCrashLogs: () => request("GET", "/debug/crash-logs"),

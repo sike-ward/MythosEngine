@@ -749,6 +749,40 @@ class SQLiteBackend(StorageBackend):
             session.query(CharacterRecord).filter(CharacterRecord.id == character_id).delete()
             session.commit()
 
+    def list_characters(self, vault_id: str = "", char_type: Optional[str] = None) -> List[Character]:
+        """List non-deleted characters, optionally filtered by vault_id and char_type ('player'|'npc')."""
+        results: List[Character] = []
+        with self._session() as session:
+            for rec in session.query(CharacterRecord).all():
+                try:
+                    char = Character.model_validate_json(rec.data)
+                    if getattr(char, "is_deleted", False):
+                        continue
+                    if vault_id and getattr(char, "vault_id", "") != vault_id:
+                        continue
+                    if char_type == "npc" and not getattr(char, "is_npc", False):
+                        continue
+                    if char_type == "player" and getattr(char, "is_npc", False):
+                        continue
+                    results.append(char)
+                except Exception:
+                    continue
+        return results
+
+    def soft_delete_character(self, character_id: str) -> None:
+        """Soft-delete a character by setting is_deleted=True in the JSON blob."""
+        with self._session() as session:
+            record = session.query(CharacterRecord).filter(CharacterRecord.id == character_id).first()
+            if record:
+                try:
+                    char = Character.model_validate_json(record.data)
+                    char.is_deleted = True
+                    char.last_modified = datetime.utcnow()
+                    record.data = char.model_dump_json()
+                    session.commit()
+                except Exception:
+                    pass
+
     def save_map(self, map_obj: Map) -> None:
         """Save or update a Map record."""
         with self._session() as session:
