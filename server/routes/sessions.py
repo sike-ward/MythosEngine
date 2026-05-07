@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
 from server.deps import get_ctx, get_current_user
+from server.vault_access import resolve_vault
 
 router = APIRouter()
 
@@ -61,6 +62,7 @@ async def list_sessions(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
+    vault_id = resolve_vault(ctx, user, vault_id).id
     items, total = ctx.storage.list_session_logs(vault_id, skip=skip, limit=limit)
     return {"items": items, "total": total, "skip": skip, "limit": limit}
 
@@ -84,6 +86,7 @@ async def create_session(
     user: User = Depends(get_current_user),
 ):
     data = body.model_dump()
+    data["vault_id"] = resolve_vault(ctx, user, body.vault_id).id
     data["owner_id"] = user.id
     session_id = ctx.storage.save_session_log(data)
     return ctx.storage.get_session_log(session_id)

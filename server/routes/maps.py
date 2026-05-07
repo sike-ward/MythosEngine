@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from MythosEngine.models.map import Map
 from MythosEngine.models.user import User
 from server.deps import get_ctx, get_current_user
+from server.vault_access import resolve_vault
 
 logger = logging.getLogger(__name__)
 
@@ -150,10 +151,11 @@ async def list_maps(
 ):
     """List maps for a vault, optionally filtered by type."""
     try:
+        vault_id = resolve_vault(ctx, user, vault_id).id
         all_maps = ctx.storage.list_maps(vault_id=vault_id, map_type=type)
         all_maps.sort(key=lambda m: m.last_modified, reverse=True)
         total = len(all_maps)
-        page = all_maps[skip: skip + limit]
+        page = all_maps[skip : skip + limit]
         return {
             "items": [_map_to_list_item(m).model_dump() for m in page],
             "total": total,
@@ -187,8 +189,9 @@ async def create_map(
 ):
     """Create a new map."""
     try:
+        vault_id = resolve_vault(ctx, user, req.vault_id).id
         m = ctx.maps.create_map(
-            vault_id=req.vault_id,
+            vault_id=vault_id,
             owner_id=user.id,
             name=req.name,
             file_path=req.image_path,

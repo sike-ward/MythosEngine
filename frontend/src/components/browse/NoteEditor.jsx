@@ -29,6 +29,9 @@ export default function NoteEditor({
   wordCount,
   activeFolder,
   noteLoading,
+  canEdit = true,
+  editingPresence = null,
+  onCursorChange,
 }) {
   const [showPreview, setShowPreview] = useState(false);
   const textareaRef = useRef(null);
@@ -86,8 +89,8 @@ export default function NoteEditor({
         {!isEditing ? (
           <>
             <h2 className="text-lg font-bold text-txt flex-1 truncate">{selectedNote.title}</h2>
-            <Button variant="secondary" size="sm" onClick={onEdit}>Edit</Button>
-            <Button variant="secondary" size="sm" onClick={() => onToggleMove(!showMoveDialog)}>Move</Button>
+            <Button variant="secondary" size="sm" onClick={onEdit} disabled={!canEdit}>Edit</Button>
+            <Button variant="secondary" size="sm" onClick={() => onToggleMove(!showMoveDialog)} disabled={!canEdit}>Move</Button>
             {onSummarize && (
               <Button variant="ghost" size="sm" onClick={onSummarize}>Summarize</Button>
             )}
@@ -97,7 +100,7 @@ export default function NoteEditor({
             {onSuggestLinks && (
               <Button variant="ghost" size="sm" onClick={onSuggestLinks}>Suggest Links</Button>
             )}
-            <Button variant="danger" size="sm" onClick={onDelete}>Delete</Button>
+            <Button variant="danger" size="sm" onClick={onDelete} disabled={!canEdit}>Delete</Button>
           </>
         ) : (
           <>
@@ -124,6 +127,12 @@ export default function NoteEditor({
       </div>
 
       {/* Move dialog */}
+      {editingPresence && (
+        <div className="px-4 py-2 bg-warning/10 border-b border-txt-muted/10 text-xs text-txt">
+          {editingPresence.username} is editing this note{editingPresence.cursor != null ? ` (cursor ${editingPresence.cursor})` : ''}.
+        </div>
+      )}
+
       {showMoveDialog && (
         <div className="px-4 py-2 bg-elevated/50 border-b border-txt-muted/10 flex flex-wrap gap-2 items-center">
           <span className="text-txt-muted text-xs font-medium">Move to:</span>
@@ -185,6 +194,8 @@ export default function NoteEditor({
               ref={textareaRef}
               value={editContent}
               onChange={(e) => onContentChange(e.target.value)}
+              onKeyUp={(e) => onCursorChange?.(e.currentTarget.selectionStart ?? 0)}
+              onClick={(e) => onCursorChange?.(e.currentTarget.selectionStart ?? 0)}
               className="w-full h-full min-h-[300px] bg-elevated rounded-xl px-4 py-3 text-txt border-2 border-transparent focus:border-accent focus:outline-none transition resize-none font-mono text-sm"
             />
           )

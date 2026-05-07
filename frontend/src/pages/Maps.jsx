@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import clsx from "clsx";
 import { Map, Plus, Trash2, X } from "lucide-react";
 import { maps } from "../api";
+import { useVault } from "@/context/VaultContext";
 
 const MAP_TYPES = ["region", "dungeon", "city", "world"];
 
@@ -40,6 +41,7 @@ function TypeBadge({ type }) {
 
 export default function Maps() {
   const qc = useQueryClient();
+  const { activeVaultId } = useVault();
   const [selectedId, setSelectedId] = useState(null);
   const [filterType, setFilterType] = useState(null);
   const [search, setSearch] = useState("");
@@ -64,8 +66,9 @@ export default function Maps() {
 
   // ── List query ──────────────────────────────────────────────────────────────
   const { data: listData, isLoading } = useQuery({
-    queryKey: ["maps", filterType],
-    queryFn: () => maps.list("default", filterType),
+    queryKey: ["maps", activeVaultId, filterType],
+    queryFn: () => maps.list(activeVaultId, filterType),
+    enabled: !!activeVaultId,
   });
 
   const allMaps = listData?.items ?? [];
@@ -148,12 +151,12 @@ export default function Maps() {
       markers: markers.map((mk, i) => ({ id: mk.id || String(i), ...mk })),
     };
 
-    if (selectedId) {
-      updateMut.mutate({ id: selectedId, data: payload });
-    } else {
-      createMut.mutate(payload);
-    }
-  };
+      if (selectedId) {
+        updateMut.mutate({ id: selectedId, data: payload });
+      } else {
+        createMut.mutate({ ...payload, vault_id: activeVaultId });
+      }
+    };
 
   // ── New map ─────────────────────────────────────────────────────────────────
   const handleNew = () => {

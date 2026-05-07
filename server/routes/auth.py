@@ -25,7 +25,6 @@ from pydantic import BaseModel, EmailStr, field_validator
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
 from MythosEngine.utils.audit_logger import audit
-
 from server.auth_utils import create_jwt
 from server.deps import get_ctx, get_current_user
 
@@ -35,6 +34,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 # Rate limiter — prevents brute-force login attempts (Item 60)
 # ============================================================================
+
 
 class RateLimiter:
     """Simple in-memory rate limiter. Tracks attempts per key (email)."""
@@ -98,12 +98,14 @@ router = APIRouter()
 
 class LoginRequest(BaseModel):
     """Request body for POST /auth/login"""
+
     email: EmailStr
     password: str
 
 
 class LoginResponse(BaseModel):
     """Response body for successful login"""
+
     access_token: str
     token_type: str = "bearer"
     exp: datetime
@@ -112,6 +114,7 @@ class LoginResponse(BaseModel):
 
 class UserResponse(BaseModel):
     """User info response"""
+
     id: str
     username: str
     email: str
@@ -121,6 +124,7 @@ class UserResponse(BaseModel):
 
 class ChangePasswordRequest(BaseModel):
     """Request body for POST /auth/change-password"""
+
     current_password: str
     new_password: str
 
@@ -132,6 +136,7 @@ class ChangePasswordRequest(BaseModel):
 
 class RegisterRequest(BaseModel):
     """Request body for POST /auth/register"""
+
     email: EmailStr
     username: str
     password: str
@@ -145,6 +150,7 @@ class RegisterRequest(BaseModel):
 
 class RegisterResponse(BaseModel):
     """Response body for successful registration (auto-login)"""
+
     access_token: str
     token_type: str = "bearer"
     exp: datetime
@@ -153,6 +159,7 @@ class RegisterResponse(BaseModel):
 
 class SetupRequest(BaseModel):
     """Request body for POST /auth/setup (first-run admin creation)"""
+
     email: EmailStr
     username: str
     password: str
@@ -165,6 +172,7 @@ class SetupRequest(BaseModel):
 
 class SetupResponse(BaseModel):
     """Response body for successful setup (auto-login as admin)"""
+
     access_token: str
     token_type: str = "bearer"
     exp: datetime
@@ -182,7 +190,9 @@ def _count_users(ctx: AppContext) -> int:
         storage = ctx.storage
         if hasattr(storage, "engine"):
             from sqlalchemy.orm import Session as SASession
+
             from MythosEngine.storage.sqlite_backend import UserRecord
+
             with SASession(storage.engine) as session:
                 return session.query(UserRecord).count()
     except Exception as exc:
@@ -233,7 +243,9 @@ async def setup_admin(
         )
 
         ctx.storage.set_user_context(
-            user.id, is_admin=True, is_gm=True,
+            user.id,
+            is_admin=True,
+            is_gm=True,
         )
 
         role = user.roles[0] if user.roles else "admin"
@@ -249,6 +261,7 @@ async def setup_admin(
                 "username": user.username,
                 "email": user.email,
                 "roles": user.roles,
+                "groups": user.groups,
                 "is_active": user.is_active,
             },
         )
@@ -280,8 +293,7 @@ async def login(
 
     # Rate limit check (Item 60)
     if _login_limiter.is_blocked(email_key):
-        audit("FAILED_LOGIN", "auth", email_key,
-              detail=f"ip={client_ip} reason=account_locked")
+        audit("FAILED_LOGIN", "auth", email_key, detail=f"ip={client_ip} reason=account_locked")
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many login attempts. Please try again in 15 minutes.",
@@ -292,8 +304,7 @@ async def login(
         user = ctx.users.get_user_by_email(req.email)
         if not user or not user.is_active:
             _login_limiter.record(email_key)
-            audit("FAILED_LOGIN", "auth", email_key,
-                  detail=f"ip={client_ip} reason=user_not_found")
+            audit("FAILED_LOGIN", "auth", email_key, detail=f"ip={client_ip} reason=user_not_found")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid email or password",
@@ -302,8 +313,7 @@ async def login(
         # Verify password using UserManager (bcrypt, Item 58)
         if not ctx.users.verify_password(req.password, user.password_hash):
             _login_limiter.record(email_key)
-            audit("FAILED_LOGIN", "auth", email_key,
-                  detail=f"ip={client_ip} reason=wrong_password")
+            audit("FAILED_LOGIN", "auth", email_key, detail=f"ip={client_ip} reason=wrong_password")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid email or password",
@@ -311,8 +321,7 @@ async def login(
 
         # Login successful — reset rate limiter and log (Items 59, 60)
         _login_limiter.reset(email_key)
-        audit("SUCCESS_LOGIN", "auth", user.id, user_id=user.id,
-              detail=f"ip={client_ip}")
+        audit("SUCCESS_LOGIN", "auth", user.id, user_id=user.id, detail=f"ip={client_ip}")
 
         # Set user context on storage for permission checks
         ctx.storage.set_user_context(
@@ -338,6 +347,7 @@ async def login(
                 "username": user.username,
                 "email": user.email,
                 "roles": user.roles,
+                "groups": user.groups,
                 "is_active": user.is_active,
             },
         )
@@ -375,6 +385,7 @@ async def get_me(
             "username": user.username,
             "email": user.email,
             "roles": user.roles,
+            "groups": user.groups,
             "is_active": user.is_active,
         }
     }
@@ -446,6 +457,7 @@ async def register(
                 "username": user.username,
                 "email": user.email,
                 "roles": user.roles or ["player"],
+                "groups": user.groups,
                 "is_active": user.is_active,
             },
         )

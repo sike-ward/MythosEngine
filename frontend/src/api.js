@@ -8,6 +8,20 @@ const BASE =
     ? "http://127.0.0.1:8741"
     : "/api";
 
+export function getApiBase() {
+  return BASE;
+}
+
+export function getWsBase() {
+  if (BASE.startsWith("http://")) return BASE.replace("http://", "ws://");
+  if (BASE.startsWith("https://")) return BASE.replace("https://", "wss://");
+  if (typeof window !== "undefined") {
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${window.location.host}${BASE}`;
+  }
+  return BASE;
+}
+
 let _token = localStorage.getItem("me_token") || null;
 
 export function setToken(t) {
@@ -106,10 +120,11 @@ export const auth = {
 
 // ── Notes ────────────────────────────────────────────────────────────────────
 export const notes = {
-  list: async (folder = "", tag = "") => {
+  list: async (folder = "", tag = "", vault_id = "") => {
     const params = new URLSearchParams();
     if (folder) params.set("folder", folder);
     if (tag) params.set("tag", tag);
+    if (vault_id) params.set("vault_id", vault_id);
     const qs = params.toString();
     const res = await request("GET", `/notes${qs ? `?${qs}` : ""}`);
     // The backend returns a paginated envelope {items, total, skip, limit}.
@@ -124,13 +139,14 @@ export const notes = {
     if (options.tags) params.set("tags", options.tags);
     if (options.date_from) params.set("date_from", options.date_from);
     if (options.date_to) params.set("date_to", options.date_to);
+    if (options.vault_id) params.set("vault_id", options.vault_id);
     if (options.skip != null) params.set("skip", String(options.skip));
     if (options.limit != null) params.set("limit", String(options.limit));
     return request("GET", `/notes/search?${params.toString()}`);
   },
 
-  create: (title, content = "", folder_id = null, tags = [], meta = {}) =>
-    request("POST", "/notes", { title, content, folder_id, tags, meta }),
+  create: (title, content = "", folder_id = null, tags = [], meta = {}, vault_id = null) =>
+    request("POST", "/notes", { title, content, folder_id, tags, meta, vault_id }),
   update: (id, data) =>
     request("PUT", `/notes/${encodeURIComponent(id)}`, data),
   delete: (id) => request("DELETE", `/notes/${encodeURIComponent(id)}`),
@@ -149,9 +165,9 @@ export const notes = {
 
 // ── Folders ──────────────────────────────────────────────────────────────────
 export const folders = {
-  list: () => request("GET", "/notes/folders"),
-  create: (name, parent_id = null) =>
-    request("POST", "/notes/folders", { name, parent_id }),
+  list: (vault_id = "") => request("GET", `/notes/folders${vault_id ? `?vault_id=${encodeURIComponent(vault_id)}` : ""}`),
+  create: (name, parent_id = null, vault_id = null) =>
+    request("POST", "/notes/folders", { name, parent_id, vault_id }),
   update: (id, data) =>
     request("PUT", `/notes/folders/${encodeURIComponent(id)}`, data),
   delete: (id) =>
@@ -195,8 +211,47 @@ export const users = {
 // ── Invites (admin) ──────────────────────────────────────────────────────────
 export const invites = {
   list: () => request("GET", "/invites"),
-  generate: () => request("POST", "/invites"),
+  generate: ({ ttl_days = 7, max_uses = 1 } = {}) => request("POST", "/invites", { ttl_days, max_uses }),
   revoke: (id) => request("DELETE", `/invites/${id}`),
+};
+
+export const vaults = {
+  list: () => request("GET", "/vaults"),
+  create: (data) => request("POST", "/vaults", data),
+  update: (id, data) => request("PUT", `/vaults/${encodeURIComponent(id)}`, data),
+  remove: (id) => request("DELETE", `/vaults/${encodeURIComponent(id)}`),
+  exportZip: async (id) => {
+    const headers = {};
+    if (_token) headers["Authorization"] = `Bearer ${_token}`;
+    const res = await fetch(`${BASE}/vaults/${encodeURIComponent(id)}/export`, { headers });
+    if (!res.ok) throw new Error("Failed to export vault");
+    return res.blob();
+  },
+  importZip: async (file, name = "") => {
+    const headers = {};
+    if (_token) headers["Authorization"] = `Bearer ${_token}`;
+    const formData = new FormData();
+    formData.append("file", file);
+    if (name) formData.append("name", name);
+    const res = await fetch(`${BASE}/vaults/import`, { method: "POST", headers, body: formData });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || "Vault import failed");
+    }
+    return res.json();
+  },
+  updateBackup: (id, cron) => request("PUT", `/vaults/${encodeURIComponent(id)}/backup?cron=${encodeURIComponent(cron)}`),
+};
+
+export const groups = {
+  list: () => request("GET", "/groups"),
+  create: (data) => request("POST", "/groups", data),
+  update: (id, data) => request("PUT", `/groups/${encodeURIComponent(id)}`, data),
+  remove: (id) => request("DELETE", `/groups/${encodeURIComponent(id)}`),
+  addMember: (id, user_id, role = "player") =>
+    request("POST", `/groups/${encodeURIComponent(id)}/members`, { user_id, role }),
+  removeMember: (id, user_id) =>
+    request("DELETE", `/groups/${encodeURIComponent(id)}/members/${encodeURIComponent(user_id)}`),
 };
 
 // ── Sessions ─────────────────────────────────────────────────────────────────

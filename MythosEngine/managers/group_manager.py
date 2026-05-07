@@ -20,7 +20,7 @@ class GroupManager:
         created_by: str,
         description: Optional[str] = None,
         members: Optional[List[str]] = None,
-        roles: Optional[List[str]] = None,
+        member_roles: Optional[dict[str, str]] = None,
     ) -> Group:
         """
         Create and store a new group.
@@ -28,10 +28,10 @@ class GroupManager:
         group = Group(
             id=self._generate_id(),
             name=name,
-            created_by=created_by,
+            owner_id=created_by,
             description=description,
             members=members or [],
-            roles=roles or ["player"],
+            member_roles=member_roles or {},
             is_active=True,
             created_at=datetime.utcnow(),
             schema_version=1,
@@ -74,7 +74,10 @@ class GroupManager:
         group = self.get_group(group_id)
         if not group or not group.is_active:
             return False
-        if user_id in group.members and "admin" in group.roles:
+        if group.owner_id == user_id:
+            return True
+        role = (group.member_roles or {}).get(user_id)
+        if user_id in group.members and role in {"admin", "gm", permission}:
             return True
         # Extend with your permission rules
         return False

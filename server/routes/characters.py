@@ -20,12 +20,14 @@ from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.character import Character
 from MythosEngine.models.user import User
 from server.deps import get_ctx, get_current_user
+from server.vault_access import resolve_vault
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
 # ── Response / request models ─────────────────────────────────────────────────
+
 
 class CharacterResponse(BaseModel):
     id: str
@@ -72,6 +74,7 @@ class UpdateCharacterRequest(BaseModel):
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 
+
 def _to_response(char: Character) -> CharacterResponse:
     meta = getattr(char, "meta", {}) or {}
     return CharacterResponse(
@@ -95,6 +98,7 @@ def _to_response(char: Character) -> CharacterResponse:
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+
 @router.get("/")
 async def list_characters(
     vault_id: str = Query("default"),
@@ -106,6 +110,7 @@ async def list_characters(
 ):
     """List characters filtered by vault and optionally type."""
     try:
+        vault_id = resolve_vault(ctx, user, vault_id).id
         all_chars = ctx.storage.list_characters(vault_id=vault_id, char_type=type)
         total = len(all_chars)
         page = all_chars[skip : skip + limit]
@@ -136,9 +141,10 @@ async def create_character(
 ):
     """Create a new character."""
     try:
+        vault_id = resolve_vault(ctx, user, req.vault_id).id
         char = Character(
             id=str(uuid.uuid4()),
-            vault_id=req.vault_id,
+            vault_id=vault_id,
             owner_id=user.id,
             name=req.name,
             description=req.backstory or None,

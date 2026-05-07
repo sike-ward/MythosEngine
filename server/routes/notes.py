@@ -24,19 +24,19 @@ NoteManager / FolderManager for all CRUD.
 """
 
 import logging
-from typing import Optional, List, Dict
 from datetime import datetime
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
-
 from server.deps import get_ctx, get_current_user
-
+from server.realtime import hub
+from server.vault_access import resolve_vault
 
 router = APIRouter()
 
@@ -48,6 +48,7 @@ router = APIRouter()
 
 class NoteListItem(BaseModel):
     """Item in note list response — includes enough for tree + filter display."""
+
     id: str
     title: str
     folder_id: Optional[str] = None
@@ -62,6 +63,7 @@ class NoteListItem(BaseModel):
 
 class NoteDetail(BaseModel):
     """Full note response — every field the Note model exposes."""
+
     id: str
     title: str
     content: str
@@ -82,6 +84,7 @@ class NoteDetail(BaseModel):
 
 class CreateNoteRequest(BaseModel):
     """Request body for POST /notes"""
+
     title: str = Field(..., min_length=1, max_length=200)
     content: str = Field("", max_length=500_000)
     folder_id: Optional[str] = Field(None, max_length=200)
@@ -92,6 +95,7 @@ class CreateNoteRequest(BaseModel):
 
 class UpdateNoteRequest(BaseModel):
     """Request body for PUT /notes/{id}"""
+
     title: Optional[str] = Field(None, max_length=200)
     content: Optional[str] = Field(None, max_length=500_000)
     tags: Optional[List[str]] = Field(None, max_length=50)
@@ -104,34 +108,41 @@ class UpdateNoteRequest(BaseModel):
 
 class MoveNoteRequest(BaseModel):
     """Request body for POST /notes/move"""
+
     note_id: str = Field(..., max_length=200)
     dest_folder_id: Optional[str] = Field(None, max_length=200)
 
 
 class TagRequest(BaseModel):
     """Request body for POST /notes/{id}/tags"""
+
     tag: str = Field(..., min_length=1, max_length=50)
 
 
 class MetaUpdateRequest(BaseModel):
     """Request body for PUT /notes/{id}/meta"""
+
     meta: Dict[str, str]
 
 
 class CreateFolderRequest(BaseModel):
     """Request body for POST /notes/folders"""
+
     name: str = Field(..., min_length=1, max_length=200)
     parent_id: Optional[str] = Field(None, max_length=100)
+    vault_id: Optional[str] = Field(None, max_length=100)
 
 
 class UpdateFolderRequest(BaseModel):
     """Request body for PUT /notes/folders/{id}"""
+
     name: Optional[str] = Field(None, max_length=200)
     description: Optional[str] = Field(None, max_length=1000)
 
 
 class FolderResponse(BaseModel):
     """Folder response"""
+
     id: str
     name: str
     vault_id: str
@@ -198,8 +209,8 @@ def _folder_to_response(folder, ctx, user) -> FolderResponse:
     )
 
 
-def _get_default_vault_id(ctx: AppContext, user: User) -> str:
-    return "default"
+def _get_default_vault_id(ctx: AppContext, user: User, requested_vault_id: Optional[str] = None) -> str:
+    return resolve_vault(ctx, user, requested_vault_id).id
 
 
 def _set_user_ctx(ctx: AppContext, user: User) -> None:
@@ -224,6 +235,7 @@ def _get_note_or_404(ctx, note_id):
         try:
             content = ctx.storage.read_note(note_id)
             from MythosEngine.models.note import Note as NoteModel
+
             note = NoteModel(
                 id=note_id,
                 owner_id="",
@@ -256,6 +268,7 @@ async def search_notes(
     tags: Optional[str] = Query(None, description="Comma-separated tags (note must have ALL)"),
     date_from: Optional[str] = Query(None, description="Filter notes created on/after ISO date"),
     date_to: Optional[str] = Query(None, description="Filter notes created on/before ISO date"),
+    vault_id: Optional[str] = Query(None, description="Vault to search inside"),
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
@@ -269,14 +282,20 @@ async def search_notes(
     """
     try:
         _set_user_ctx(ctx, user)
-        vault_id = _get_default_vault_id(ctx, user)
+        vault_id = _get_default_vault_id(ctx, user, vault_id)
         tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
 
         # ── FTS mode ─────────────────────────────────────────────────────────
         if mode == "fts" or not mode:
             result = ctx.storage.search_notes_fts(
-                q, vault_id=vault_id, skip=skip, limit=limit,
-                folder=folder, tags=tags_list, date_from=date_from, date_to=date_to,
+                q,
+                vault_id=vault_id,
+                skip=skip,
+                limit=limit,
+                folder=folder,
+                tags=tags_list,
+                date_from=date_from,
+                date_to=date_to,
             )
             result["mode"] = "fts"
             return result
@@ -287,11 +306,11 @@ async def search_notes(
             all_results = [n for n in all_results if not getattr(n, "is_deleted", False)]
 
             if folder:
-                all_results = [n for n in all_results
-                               if (getattr(n, "folder_id", "") or "").startswith(folder)]
+                all_results = [n for n in all_results if (getattr(n, "folder_id", "") or "").startswith(folder)]
             for t in tags_list:
-                all_results = [n for n in all_results
-                               if t.lower() in [x.lower() for x in (getattr(n, "tags", []) or [])]]
+                all_results = [
+                    n for n in all_results if t.lower() in [x.lower() for x in (getattr(n, "tags", []) or [])]
+                ]
             if date_from:
                 dt_from = datetime.fromisoformat(date_from)
                 all_results = [n for n in all_results if n.created_at and n.created_at >= dt_from]
@@ -300,7 +319,7 @@ async def search_notes(
                 all_results = [n for n in all_results if n.created_at and n.created_at <= dt_to]
 
             total = len(all_results)
-            page = all_results[skip: skip + limit]
+            page = all_results[skip : skip + limit]
             return {
                 "items": [_note_to_list_item(n).model_dump() for n in page],
                 "total": total,
@@ -313,8 +332,14 @@ async def search_notes(
         if mode == "hybrid":
             # FTS leg — fetch up to 200 candidates with snippets
             fts_result = ctx.storage.search_notes_fts(
-                q, vault_id=vault_id, skip=0, limit=200,
-                folder=folder, tags=tags_list, date_from=date_from, date_to=date_to,
+                q,
+                vault_id=vault_id,
+                skip=0,
+                limit=200,
+                folder=folder,
+                tags=tags_list,
+                date_from=date_from,
+                date_to=date_to,
             )
             fts_items = fts_result.get("items", [])
 
@@ -346,13 +371,19 @@ async def search_notes(
             merged = sorted(scores.values(), key=lambda x: x["score"], reverse=True)
             all_items = [m["item"] for m in merged]
             total = len(all_items)
-            page = all_items[skip: skip + limit]
+            page = all_items[skip : skip + limit]
             return {"items": page, "total": total, "skip": skip, "limit": limit, "mode": "hybrid"}
 
         # ── Unknown mode → fall back to FTS ──────────────────────────────────
         result = ctx.storage.search_notes_fts(
-            q, vault_id=vault_id, skip=skip, limit=limit,
-            folder=folder, tags=tags_list, date_from=date_from, date_to=date_to,
+            q,
+            vault_id=vault_id,
+            skip=skip,
+            limit=limit,
+            folder=folder,
+            tags=tags_list,
+            date_from=date_from,
+            date_to=date_to,
         )
         result["mode"] = mode
         return result
@@ -366,18 +397,20 @@ async def search_notes(
 
 @router.get("/folders", response_model=List[FolderResponse])
 async def list_folders(
+    vault_id: Optional[str] = Query(None, description="Vault to list folders from"),
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
     """List all folders."""
     try:
         _set_user_ctx(ctx, user)
+        vault_id = _get_default_vault_id(ctx, user, vault_id)
         results = []
 
         # Primary: query folders stored in the SQLite database
         if hasattr(ctx.storage, "list_all_folders"):
             try:
-                db_folders = ctx.storage.list_all_folders()
+                db_folders = ctx.storage.list_all_folders(vault_id=vault_id)
                 for folder_obj in db_folders:
                     results.append(_folder_to_response(folder_obj, ctx, user))
             except Exception as exc:
@@ -386,7 +419,7 @@ async def list_folders(
         # Fallback: enumerate filesystem directories (legacy / Obsidian vaults)
         if not results:
             try:
-                folder_paths = ctx.storage.list_folders() or []
+                folder_paths = ctx.storage.list_folders(vault_id=vault_id) or []
                 for fpath in folder_paths:
                     folder_obj = None
                     try:
@@ -405,16 +438,18 @@ async def list_folders(
                         except Exception:
                             pass
 
-                        results.append(FolderResponse(
-                            id=fpath,
-                            name=name,
-                            vault_id=_get_default_vault_id(ctx, user),
-                            parent_id=None,
-                            description=None,
-                            note_ids=[],
-                            created_at=meta.get("created_at", datetime.utcnow()),
-                            last_modified=meta.get("last_modified", datetime.utcnow()),
-                        ))
+                        results.append(
+                            FolderResponse(
+                                id=fpath,
+                                name=name,
+                                vault_id=vault_id,
+                                parent_id=None,
+                                description=None,
+                                note_ids=[],
+                                created_at=meta.get("created_at", datetime.utcnow()),
+                                last_modified=meta.get("last_modified", datetime.utcnow()),
+                            )
+                        )
             except Exception as exc:
                 logger.warning("list_folders: filesystem enumeration failed: %s", exc)
 
@@ -430,6 +465,7 @@ async def list_folders(
 async def list_notes(
     folder: str = Query("", description="Folder path to list notes from"),
     tag: str = Query("", description="Filter by tag"),
+    vault_id: Optional[str] = Query(None, description="Vault to list notes from"),
     skip: int = Query(0, ge=0, description="Offset for pagination"),
     limit: int = Query(50, ge=1, le=200, description="Max items to return"),
     ctx: AppContext = Depends(get_ctx),
@@ -438,28 +474,22 @@ async def list_notes(
     """List notes, optionally filtered by folder and/or tag. Returns paginated response."""
     try:
         _set_user_ctx(ctx, user)
+        vault_id = _get_default_vault_id(ctx, user, vault_id)
 
         # Primary: query notes directly from the SQLite database.
         # This covers all notes created via the API (which have no .md file on disk).
         if hasattr(ctx.storage, "list_all_notes"):
-            all_notes = ctx.storage.list_all_notes(folder=folder, tag=tag)
+            all_notes = ctx.storage.list_all_notes(folder=folder, tag=tag, vault_id=vault_id)
             # list_all_notes already filters by folder and tag; skip redundant filters.
             all_notes = [n for n in all_notes if not getattr(n, "is_deleted", False)]
         else:
             # Fallback for non-SQLite backends: file-based search
-            all_notes = ctx.storage.search_notes("", top_k=10000)
+            all_notes = ctx.storage.search_notes("", vault_id=vault_id, top_k=10000)
 
             if folder:
-                all_notes = [
-                    n for n in all_notes
-                    if getattr(n, "folder_id", None) == folder
-                    or n.id.startswith(folder)
-                ]
+                all_notes = [n for n in all_notes if getattr(n, "folder_id", None) == folder or n.id.startswith(folder)]
             if tag:
-                all_notes = [
-                    n for n in all_notes
-                    if tag.lower() in [t.lower() for t in (getattr(n, "tags", []) or [])]
-                ]
+                all_notes = [n for n in all_notes if tag.lower() in [t.lower() for t in (getattr(n, "tags", []) or [])]]
             all_notes = [n for n in all_notes if not getattr(n, "is_deleted", False)]
 
         # Sort by last_modified descending
@@ -510,7 +540,7 @@ async def create_note(
     """Create a new note."""
     try:
         _set_user_ctx(ctx, user)
-        vault_id = _get_default_vault_id(ctx, user)
+        vault_id = _get_default_vault_id(ctx, user, req.vault_id)
         note = ctx.notes.create_note(
             vault_id=vault_id,
             owner_id=user.id,
@@ -523,6 +553,7 @@ async def create_note(
         if req.meta:
             note.meta = req.meta
             ctx.notes.update_note(note, actor_id=user.id)
+        await hub.publish_note_saved(vault_id, _note_to_detail(note).model_dump(mode="json"))
 
         return _note_to_detail(note)
     except Exception as e:
@@ -562,6 +593,7 @@ async def update_note(
             note.group_id = req.group_id
 
         ctx.notes.update_note(note, actor_id=user.id)
+        await hub.publish_note_saved(note.vault_id, _note_to_detail(note).model_dump(mode="json"))
         return _note_to_detail(note)
     except HTTPException:
         raise
@@ -744,7 +776,7 @@ async def create_folder(
     """Create a new folder."""
     try:
         _set_user_ctx(ctx, user)
-        vault_id = _get_default_vault_id(ctx, user)
+        vault_id = _get_default_vault_id(ctx, user, req.vault_id)
         folder = ctx.folders.create_folder(
             vault_id=vault_id,
             name=req.name,
