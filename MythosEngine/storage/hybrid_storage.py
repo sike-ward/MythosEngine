@@ -19,6 +19,7 @@ from MythosEngine.models.character import Character
 from MythosEngine.models.folder import Folder
 from MythosEngine.models.group import Group
 from MythosEngine.models.image import Image
+from MythosEngine.models.invite_code import InviteCode
 from MythosEngine.models.map import Map
 from MythosEngine.models.note import Note
 from MythosEngine.models.session import Session
@@ -385,7 +386,7 @@ class HybridStorage(StorageBackend):
         orig = self._abs(note_path)
         version_dir = self.vault_path / ".versions" / Path(note_path).parent
         version_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         backup = version_dir / f"{orig.name}.{timestamp}.bak"
         shutil.copy2(str(orig), str(backup))
         return str(backup)
@@ -471,3 +472,58 @@ class HybridStorage(StorageBackend):
             existing = json.loads(meta_path.read_text(encoding="utf-8"))
             existing.update(meta)
             meta_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+
+    # ------------------------------------------------------------------
+    # Active Sessions
+    # ------------------------------------------------------------------
+
+    def list_active_sessions(self) -> List[Session]:
+        """Return all sessions that are active and not yet expired."""
+        session_dir = self._dnd_meta_dir("sessions")
+        results: List[Session] = []
+        for p in session_dir.glob("*.json"):
+            try:
+                s = Session.model_validate(json.loads(p.read_text(encoding="utf-8")))
+                if s.is_active and not s.is_expired():
+                    results.append(s)
+            except Exception:
+                continue
+        return results
+
+    # ------------------------------------------------------------------
+    # Invite Codes
+    # ------------------------------------------------------------------
+
+    def save_invite(self, invite: "InviteCode") -> None:
+        p = self._dnd_meta_path("invites", invite.id)
+        p.write_text(json.dumps(invite.model_dump(), indent=2), encoding="utf-8")
+
+    def get_invite_by_code(self, code: str) -> Optional["InviteCode"]:
+        invite_dir = self._dnd_meta_dir("invites")
+        # Invite codes are always stored and compared in uppercase (see save_invite / InviteManager).
+        code_upper = code.strip().upper()
+        for p in invite_dir.glob("*.json"):
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                if data.get("code", "").upper() == code_upper:
+                    return InviteCode.model_validate(data)
+            except Exception:
+                continue
+        return None
+
+    def get_invite_by_id(self, invite_id: str) -> Optional["InviteCode"]:
+        p = self._dnd_meta_path("invites", invite_id)
+        if not p.is_file():
+            return None
+        return InviteCode.model_validate(json.loads(p.read_text(encoding="utf-8")))
+
+    def list_invites(self) -> List["InviteCode"]:
+        """Return all invite codes."""
+        invite_dir = self._dnd_meta_dir("invites")
+        codes: List[InviteCode] = []
+        for p in invite_dir.glob("*.json"):
+            try:
+                codes.append(InviteCode.model_validate(json.loads(p.read_text(encoding="utf-8"))))
+            except Exception:
+                continue
+        return codes

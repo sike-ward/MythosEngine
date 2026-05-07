@@ -23,8 +23,11 @@ We use search_notes("") or get_note_by_id() for Note objects, and the
 NoteManager / FolderManager for all CRUD.
 """
 
+import logging
 from typing import Optional, List, Dict
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel
@@ -296,8 +299,8 @@ async def list_folders(
                         created_at=meta.get("created_at", datetime.utcnow()),
                         last_modified=meta.get("last_modified", datetime.utcnow()),
                     ))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("list_folders: inner folder enumeration failed: %s", exc)
 
         return results
     except Exception as e:

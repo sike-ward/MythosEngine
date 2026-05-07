@@ -1,5 +1,8 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional, Set
+from typing import TYPE_CHECKING, List, Optional, Set
+
+if TYPE_CHECKING:
+    from MythosEngine.search.search_types import SearchQuery, SearchResult
 
 from MythosEngine.models.character import Character
 from MythosEngine.models.folder import Folder
@@ -338,3 +341,51 @@ class StorageBackend(ABC):
         Only updates provided keys — does not overwrite the full record.
         """
         pass
+
+    def search(self, query: "SearchQuery") -> "List[SearchResult]":
+        """
+        Structured search returning SearchResult objects.
+
+        Default implementation wraps search_notes(); backends may override
+        for performance (e.g. FTS index). Filters by query.search_type when
+        the type is 'title' or 'tag'; falls back to full-text for 'keyword'.
+        """
+        from MythosEngine.search.search_types import SearchResult
+
+        if query.search_type == "title":
+            from pathlib import Path as _Path
+            paths = [
+                n for n in self.list_notes()
+                if query.query_str.lower() in _Path(n).name.lower()
+            ]
+            return [SearchResult(note_path=p, title=_Path(p).stem) for p in paths[: query.top_k]]
+
+        if query.search_type == "tag":
+            import re as _re
+            results = []
+            for n in self.list_notes():
+                try:
+                    content = self.read_note(n)
+                    tags = [
+                        w.lstrip("#").strip("[]")
+                        for w in content.split()
+                        if w.startswith("#") or w.startswith("[[")
+                    ]
+                    if any(query.query_str.lower() in t.lower() for t in tags):
+                        results.append(SearchResult(note_path=n, title=n))
+                        if len(results) >= query.top_k:
+                            break
+                except Exception:
+                    continue
+            return results
+
+        # "keyword" / default — full-text search via search_notes()
+        notes = self.search_notes(query.query_str, vault_id=query.vault_id, top_k=query.top_k)
+        return [
+            SearchResult(
+                note_path=n.id,
+                title=n.title,
+                snippet=(n.content or "")[:120],
+            )
+            for n in notes
+        ]

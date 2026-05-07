@@ -28,6 +28,7 @@ from MythosEngine.auth.login_dialog import LoginDialog
 from MythosEngine.auth.setup_wizard import SetupWizard
 from MythosEngine.config.config import Config
 from MythosEngine.context.app_context import AppContext
+from MythosEngine.core.event_bus import get_event_bus
 from MythosEngine.gui.gui import LoreMainApp
 from MythosEngine.utils.crash_handler import catch_and_report_crashes
 
@@ -111,6 +112,7 @@ def main():
         _is_gm = "gm" in user.roles
         ctx.storage.set_user_context(user.id, is_admin=_is_admin, is_gm=_is_gm)
         logger.info("Logged in as: %s (%s) admin=%s gm=%s", user.username, user.id, _is_admin, _is_gm)
+        get_event_bus().user_logged_in.emit(user.id)
 
         # --- Re-use or create main window ---
         if window is None:
@@ -133,6 +135,7 @@ def main():
         """Called when AuthManager.session_ended fires (logout button)."""
         nonlocal window
         logger.info("Session ended — returning to login dialog.")
+        get_event_bus().user_logged_out.emit()
         if window:
             window.hide()
         ctx.current_user_id = None

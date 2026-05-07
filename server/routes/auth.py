@@ -14,11 +14,14 @@ which is unavailable in the headless FastAPI server context. Instead we
 use UserManager directly for credential verification.
 """
 
+import logging
 import secrets
 import time
 from collections import defaultdict
 from datetime import datetime
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, field_validator
@@ -167,8 +170,8 @@ def _count_users(ctx: AppContext) -> int:
             from MythosEngine.storage.sqlite_backend import UserRecord
             with SASession(storage.engine) as session:
                 return session.query(UserRecord).count()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("_count_users: database query failed: %s", exc)
     return -1  # unknown
 
 

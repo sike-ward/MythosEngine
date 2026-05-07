@@ -75,6 +75,14 @@ class UserManager:
             user.is_active = False
             self.update_user(user)
 
+    def hard_delete_user(self, user_id: str) -> None:
+        """
+        Permanently remove a user record from storage.
+        Use with caution — this cannot be undone.
+        """
+        self.storage.delete_user_by_id(user_id)
+        audit("delete", "user", user_id, user_id="system")
+
     def verify_password(self, password: str, password_hash: str) -> bool:
         """
         Check if a plaintext password matches the stored hash.
