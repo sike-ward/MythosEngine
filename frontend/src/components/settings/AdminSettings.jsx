@@ -95,16 +95,16 @@ export default function AdminSettings() {
     resetPasswordMutation.mutate({ id: resetUserId, password: resetNewPassword });
   };
 
-  const getUserRole = (u) => {
-    if (u.roles && Array.isArray(u.roles)) return u.roles[0] || ROLE_PLAYER;
-    return u.role || ROLE_PLAYER;
+  const normalizeRoles = (u) => {
+    if (Array.isArray(u.roles)) {
+      const roles = u.roles.filter(Boolean);
+      return roles.length ? roles : [ROLE_PLAYER];
+    }
+    if (typeof u.role === 'string' && u.role.trim()) return [u.role];
+    return [ROLE_PLAYER];
   };
 
-  const normalizeRoles = (u) => {
-    if (Array.isArray(u.roles)) return u.roles.filter(Boolean);
-    if (typeof u.role === 'string' && u.role.trim()) return [u.role];
-    return [];
-  };
+  const getUserRole = (u) => normalizeRoles(u)[0] || ROLE_PLAYER;
 
   const hasAdminRole = (u) => normalizeRoles(u).includes(ROLE_ADMIN);
   const isInviteActive = (inv) => inv.is_active && (!inv.expires_at || new Date(inv.expires_at) > new Date());

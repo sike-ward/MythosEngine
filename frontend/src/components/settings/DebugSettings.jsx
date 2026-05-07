@@ -4,6 +4,9 @@ import { toast } from 'sonner';
 import { debug } from '@/api';
 import Button from '@/components/Button';
 
+const RUNTIME_LOG_REFRESH_INTERVAL = 10000;
+const MAX_RUNTIME_LOG_LINES = 200;
+
 export default function DebugSettings() {
   const queryClient = useQueryClient();
   const [selectedCrash, setSelectedCrash] = useState('');
@@ -11,7 +14,7 @@ export default function DebugSettings() {
   const { data: runtimeLog, isLoading: runtimeLoading } = useQuery({
     queryKey: ['debug-runtime-log'],
     queryFn: debug.getRuntimeLog,
-    refetchInterval: 10000,
+    refetchInterval: RUNTIME_LOG_REFRESH_INTERVAL,
   });
 
   const { data: crashLogs = [], isLoading: crashListLoading } = useQuery({
@@ -50,7 +53,7 @@ export default function DebugSettings() {
     const content = runtimeLog?.content || '';
     if (!content.trim()) return [];
     const seen = new Map();
-    return content.split('\n').slice(-200).map((line) => {
+    return content.split('\n').slice(-MAX_RUNTIME_LOG_LINES).map((line) => {
       const count = (seen.get(line) || 0) + 1;
       seen.set(line, count);
       return { key: `${line}-${count}`, line };
