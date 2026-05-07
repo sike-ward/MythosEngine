@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import Button from '@/components/Button';
 import Badge from '@/components/Badge';
-import { users, invites } from '@/api';
+import { users, invites, dashboard } from '@/api';
 
 export default function AdminSettings() {
   const queryClient = useQueryClient();
@@ -18,6 +18,11 @@ export default function AdminSettings() {
   const { data: invitesList = [], isLoading: invitesLoading } = useQuery({
     queryKey: ['invites'],
     queryFn: invites.list,
+  });
+
+  const { data: dashboardStats = {}, isLoading: statsLoading } = useQuery({
+    queryKey: ['dashboard-stats'],
+    queryFn: dashboard.stats,
   });
 
   const generateInviteMutation = useMutation({
@@ -66,6 +71,15 @@ export default function AdminSettings() {
     onError: () => toast.error('Failed to reset password'),
   });
 
+  const updateRoleMutation = useMutation({
+    mutationFn: ({ id, roles }) => users.updateRole(id, roles),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      toast.success('Role updated');
+    },
+    onError: () => toast.error('Failed to update role'),
+  });
+
   const handleCopyInvite = (code) => {
     navigator.clipboard.writeText(code)
       .then(() => toast.success('Copied to clipboard!'))
@@ -83,8 +97,55 @@ export default function AdminSettings() {
     return u.role || 'player';
   };
 
+  const adminCount = usersList.filter((u) => (u.roles || []).includes('admin') || u.role === 'admin').length;
+  const activeUserCount = usersList.filter((u) => u.is_active !== false).length;
+  const activeInvites = invitesList.filter((inv) => inv.is_active && (!inv.expires_at || new Date(inv.expires_at) > new Date())).length;
+
+  const handleRoleToggle = (u) => {
+    const currentRoles = Array.isArray(u.roles) ? [...u.roles] : [getUserRole(u)];
+    const hasAdmin = currentRoles.includes('admin');
+    const nextRoles = hasAdmin
+      ? currentRoles.filter((r) => r !== 'admin')
+      : [...currentRoles, 'admin'];
+    if (nextRoles.length === 0) nextRoles.push('player');
+    updateRoleMutation.mutate({ id: u.id, roles: [...new Set(nextRoles)] });
+  };
+
   return (
     <div className="space-y-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <div className="bg-elevated rounded-xl p-3">
+          <p className="text-xs text-txt-muted uppercase">Users</p>
+          <p className="text-xl font-bold text-txt">{usersLoading ? '...' : usersList.length}</p>
+          <p className="text-xs text-txt-muted">{usersLoading ? 'Loading…' : `${activeUserCount} active`}</p>
+        </div>
+        <div className="bg-elevated rounded-xl p-3">
+          <p className="text-xs text-txt-muted uppercase">Admins</p>
+          <p className="text-xl font-bold text-txt">{usersLoading ? '...' : adminCount}</p>
+          <p className="text-xs text-txt-muted">Accounts with admin role</p>
+        </div>
+        <div className="bg-elevated rounded-xl p-3">
+          <p className="text-xs text-txt-muted uppercase">Invite Codes</p>
+          <p className="text-xl font-bold text-txt">{invitesLoading ? '...' : activeInvites}</p>
+          <p className="text-xs text-txt-muted">Active and unexpired</p>
+        </div>
+        <div className="bg-elevated rounded-xl p-3">
+          <p className="text-xs text-txt-muted uppercase">Notes</p>
+          <p className="text-xl font-bold text-txt">{statsLoading ? '...' : (dashboardStats.notes ?? 0)}</p>
+          <p className="text-xs text-txt-muted">Worldbuilding entries</p>
+        </div>
+        <div className="bg-elevated rounded-xl p-3">
+          <p className="text-xs text-txt-muted uppercase">Characters</p>
+          <p className="text-xl font-bold text-txt">{statsLoading ? '...' : (dashboardStats.characters ?? 0)}</p>
+          <p className="text-xs text-txt-muted">Character records</p>
+        </div>
+        <div className="bg-elevated rounded-xl p-3">
+          <p className="text-xs text-txt-muted uppercase">Sessions</p>
+          <p className="text-xl font-bold text-txt">{statsLoading ? '...' : (dashboardStats.sessions ?? 0)}</p>
+          <p className="text-xs text-txt-muted">Campaign session logs</p>
+        </div>
+      </div>
+
       {/* Invite Codes */}
       <div>
         <div className="flex items-center justify-between mb-4">
@@ -180,6 +241,14 @@ export default function AdminSettings() {
                       />
                     </td>
                     <td className="py-3 px-4 space-x-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={updateRoleMutation.isPending}
+                        onClick={() => handleRoleToggle(u)}
+                      >
+                        {getUserRole(u) === 'admin' ? 'Make Player' : 'Make Admin'}
+                      </Button>
                       <Button variant="secondary" size="sm" onClick={() => { setResetUserId(u.id); setResetNewPassword(''); }}>
                         Reset PW
                       </Button>
