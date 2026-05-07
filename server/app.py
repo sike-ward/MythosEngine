@@ -13,13 +13,19 @@ We need a QCoreApplication instance for QObject to work. We create a headless
 one at startup so the existing backend code works without modification.
 """
 
+import logging
 import os
 import sys
-from pathlib import Path
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
 # Add parent directory so MythosEngine package is importable
 _parent = Path(__file__).resolve().parent.parent
@@ -38,6 +44,7 @@ except ImportError:
 from MythosEngine.config.config import Config
 from MythosEngine.context.app_context import AppContext
 
+from server.middleware.logging import LoggingMiddleware
 from server.routes import auth, notes, ai, dashboard, users, settings, invites
 
 
@@ -86,6 +93,8 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+app.add_middleware(LoggingMiddleware)
 
 # CORS — allow Vite dev server and Electron renderer
 app.add_middleware(

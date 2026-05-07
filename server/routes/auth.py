@@ -4,7 +4,7 @@ Authentication endpoints.
 GET /auth/status — check if setup is needed (no users exist)
 POST /auth/setup — create initial admin account (only works when 0 users)
 POST /auth/login — authenticate with email/password
-POST /auth/logout — revoke token
+POST /auth/logout — invalidate session (client drops token)
 GET /auth/me — get current user info
 POST /auth/change-password — change password
 POST /auth/register — create new account with invite code
@@ -14,19 +14,19 @@ which is unavailable in the headless FastAPI server context. Instead we
 use UserManager directly for credential verification.
 """
 
-import secrets
 import time
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, field_validator
 
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
 
-from server.deps import get_ctx, get_current_user, get_token_store, TokenStore
+from server.auth_utils import create_jwt
+from server.deps import get_ctx, get_current_user
 
 
 # ============================================================================
@@ -92,7 +92,9 @@ class LoginRequest(BaseModel):
 
 class LoginResponse(BaseModel):
     """Response body for successful login"""
-    token: str
+    access_token: str
+    token_type: str = "bearer"
+    exp: datetime
     user: dict
 
 
@@ -131,7 +133,9 @@ class RegisterRequest(BaseModel):
 
 class RegisterResponse(BaseModel):
     """Response body for successful registration (auto-login)"""
-    token: str
+    access_token: str
+    token_type: str = "bearer"
+    exp: datetime
     user: dict
 
 
@@ -149,7 +153,9 @@ class SetupRequest(BaseModel):
 
 class SetupResponse(BaseModel):
     """Response body for successful setup (auto-login as admin)"""
-    token: str
+    access_token: str
+    token_type: str = "bearer"
+    exp: datetime
     user: dict
 
 
@@ -194,7 +200,6 @@ async def auth_status(
 async def setup_admin(
     req: SetupRequest,
     ctx: AppContext = Depends(get_ctx),
-    token_store: TokenStore = Depends(get_token_store),
 ):
     """
     Create the initial admin account. Only works when the database has zero users.
@@ -215,16 +220,18 @@ async def setup_admin(
             roles=["admin", "gm"],
         )
 
-        # Auto-login
-        token = secrets.token_urlsafe(32)
-        token_store.store(token, user.id)
-
         ctx.storage.set_user_context(
             user.id, is_admin=True, is_gm=True,
         )
 
+        role = user.roles[0] if user.roles else "admin"
+        token = create_jwt(user.id, user.email, role)
+        exp = datetime.utcnow() + timedelta(hours=8)
+
         return SetupResponse(
-            token=token,
+            access_token=token,
+            token_type="bearer",
+            exp=exp,
             user={
                 "id": user.id,
                 "username": user.username,
@@ -249,11 +256,10 @@ async def setup_admin(
 async def login(
     req: LoginRequest,
     ctx: AppContext = Depends(get_ctx),
-    token_store: TokenStore = Depends(get_token_store),
 ):
     """
     Authenticate with email and password.
-    Returns a bearer token and user info on success.
+    Returns a signed JWT bearer token and user info on success.
     Rate-limited: max 5 failed attempts per email per 15 minutes.
     """
     # Rate limit check
@@ -285,10 +291,6 @@ async def login(
         # Login successful — reset rate limiter for this email
         _login_limiter.reset(email_key)
 
-        # Generate a bearer token
-        token = secrets.token_urlsafe(32)
-        token_store.store(token, user.id)
-
         # Set user context on storage for permission checks
         ctx.storage.set_user_context(
             user.id,
@@ -300,8 +302,14 @@ async def login(
         user.last_login = datetime.utcnow()
         ctx.users.update_user(user)
 
+        role = user.roles[0] if user.roles else "player"
+        token = create_jwt(user.id, user.email, role)
+        exp = datetime.utcnow() + timedelta(hours=8)
+
         return LoginResponse(
-            token=token,
+            access_token=token,
+            token_type="bearer",
+            exp=exp,
             user={
                 "id": user.id,
                 "username": user.username,
@@ -321,19 +329,12 @@ async def login(
 
 @router.post("/logout")
 async def logout(
-    request: Request,
     user: User = Depends(get_current_user),
-    token_store: TokenStore = Depends(get_token_store),
 ):
     """
-    Revoke the current token and logout.
+    Logout the current user. JWTs are stateless so the client is responsible
+    for discarding the token. This endpoint confirms the token was valid.
     """
-    # Extract the token from the Authorization header
-    auth_header = request.headers.get("Authorization", "")
-    parts = auth_header.split()
-    if len(parts) == 2:
-        token_store.revoke(parts[1])
-
     return {"message": "Logged out successfully"}
 
 
@@ -384,11 +385,10 @@ async def change_password(
 async def register(
     req: RegisterRequest,
     ctx: AppContext = Depends(get_ctx),
-    token_store: TokenStore = Depends(get_token_store),
 ):
     """
     Register a new user with an invite code, then auto-login.
-    Returns a token + user dict so the frontend can start a session immediately.
+    Returns a JWT + user dict so the frontend can start a session immediately.
     """
     try:
         # Validate invite code
@@ -410,12 +410,14 @@ async def register(
         # Redeem the invite
         ctx.invites.redeem(req.invite_code, user.id)
 
-        # Auto-login: generate token
-        token = secrets.token_urlsafe(32)
-        token_store.store(token, user.id)
+        role = user.roles[0] if user.roles else "player"
+        token = create_jwt(user.id, user.email, role)
+        exp = datetime.utcnow() + timedelta(hours=8)
 
         return RegisterResponse(
-            token=token,
+            access_token=token,
+            token_type="bearer",
+            exp=exp,
             user={
                 "id": user.id,
                 "username": user.username,

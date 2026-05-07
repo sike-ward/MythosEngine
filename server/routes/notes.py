@@ -458,8 +458,8 @@ async def delete_note(
                 detail="Access denied",
             )
 
-        ctx.notes.delete_note(note_id, actor_id=user.id)
-        return {"message": "Note deleted successfully"}
+        ctx.storage.soft_delete_note(note_id)
+        return {"deleted": True, "path": note_id}
     except HTTPException:
         raise
     except Exception as e:

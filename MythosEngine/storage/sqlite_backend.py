@@ -467,6 +467,17 @@ class SQLiteBackend(StorageBackend):
             session.query(NoteRecord).filter(NoteRecord.id == note_id).delete()
             session.commit()
 
+    def soft_delete_note(self, note_id: str) -> None:
+        """Soft-delete a note by setting is_deleted=True in its JSON blob."""
+        with self._session() as session:
+            record = session.query(NoteRecord).filter(NoteRecord.id == note_id).first()
+            if record:
+                note = Note.model_validate_json(record.data)
+                note.is_deleted = True
+                note.last_modified = datetime.utcnow()
+                record.data = note.model_dump_json()
+                session.commit()
+
     def list_notes(self, folder: str = "") -> List[str]:
         """List note file paths the current user can access.
 
