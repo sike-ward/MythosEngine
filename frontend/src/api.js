@@ -94,8 +94,17 @@ export const notes = {
     return request("GET", `/notes${qs ? `?${qs}` : ""}`);
   },
   get: (id) => request("GET", `/notes/${encodeURIComponent(id)}`),
-  search: (query) =>
-    request("GET", `/notes/search?q=${encodeURIComponent(query)}`),
+  search: (query, options = {}) => {
+    const params = new URLSearchParams({ q: query });
+    if (options.mode) params.set("mode", options.mode);
+    if (options.folder) params.set("folder", options.folder);
+    if (options.tags) params.set("tags", options.tags);
+    if (options.date_from) params.set("date_from", options.date_from);
+    if (options.date_to) params.set("date_to", options.date_to);
+    if (options.skip != null) params.set("skip", String(options.skip));
+    if (options.limit != null) params.set("limit", String(options.limit));
+    return request("GET", `/notes/search?${params.toString()}`);
+  },
 
   create: (title, content = "", folder_id = null, tags = [], meta = {}) =>
     request("POST", "/notes", { title, content, folder_id, tags, meta }),

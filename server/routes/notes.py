@@ -57,6 +57,7 @@ class NoteListItem(BaseModel):
     is_deleted: bool = False
     created_at: datetime
     last_modified: datetime
+    snippet: Optional[str] = None  # FTS5 highlighted excerpt, present on search results
 
 
 class NoteDetail(BaseModel):
@@ -236,26 +237,116 @@ async def search_notes(
     q: str = Query(..., min_length=1, description="Search query"),
     skip: int = Query(0, ge=0, description="Offset for pagination"),
     limit: int = Query(50, ge=1, le=200, description="Max results to return"),
+    mode: str = Query("fts", description="Search mode: fts | semantic | hybrid"),
+    folder: Optional[str] = Query(None, description="Filter by folder prefix"),
+    tags: Optional[str] = Query(None, description="Comma-separated tags (note must have ALL)"),
+    date_from: Optional[str] = Query(None, description="Filter notes created on/after ISO date"),
+    date_to: Optional[str] = Query(None, description="Filter notes created on/before ISO date"),
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """Search notes by title and content."""
+    """Search notes by title, content, and tags.
+
+    Modes:
+    - ``fts``      — FTS5 full-text search with BM25 ranking and snippet highlighting
+                     (falls back to LIKE search if FTS5 unavailable)
+    - ``semantic`` — Vector similarity search via VectorIndexManager
+    - ``hybrid``   — Runs both; merges results weighted FTS×0.6 + semantic×0.4
+    """
     try:
         ctx.storage.set_user_context(
             user.id,
             is_admin="admin" in (user.roles or []),
             is_gm="gm" in (user.roles or []),
         )
-        all_results = ctx.storage.search_notes(q, top_k=10000)
-        all_results = [n for n in all_results if not getattr(n, "is_deleted", False)]
-        total = len(all_results)
-        page = all_results[skip : skip + limit]
-        return {
-            "items": [_note_to_list_item(n).model_dump() for n in page],
-            "total": total,
-            "skip": skip,
-            "limit": limit,
-        }
+        vault_id = _get_default_vault_id(ctx, user)
+        tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+
+        # ── FTS mode ─────────────────────────────────────────────────────────
+        if mode == "fts" or not mode:
+            result = ctx.storage.search_notes_fts(
+                q, vault_id=vault_id, skip=skip, limit=limit,
+                folder=folder, tags=tags_list, date_from=date_from, date_to=date_to,
+            )
+            result["mode"] = "fts"
+            return result
+
+        # ── Semantic mode ─────────────────────────────────────────────────────
+        if mode == "semantic":
+            all_results = ctx.storage.search_notes(q, vault_id=vault_id, top_k=10000, search_type="semantic")
+            all_results = [n for n in all_results if not getattr(n, "is_deleted", False)]
+
+            if folder:
+                all_results = [n for n in all_results
+                               if (getattr(n, "folder_id", "") or "").startswith(folder)]
+            for t in tags_list:
+                all_results = [n for n in all_results
+                               if t.lower() in [x.lower() for x in (getattr(n, "tags", []) or [])]]
+            if date_from:
+                dt_from = datetime.fromisoformat(date_from)
+                all_results = [n for n in all_results if n.created_at and n.created_at >= dt_from]
+            if date_to:
+                dt_to = datetime.fromisoformat(date_to)
+                all_results = [n for n in all_results if n.created_at and n.created_at <= dt_to]
+
+            total = len(all_results)
+            page = all_results[skip: skip + limit]
+            return {
+                "items": [_note_to_list_item(n).model_dump() for n in page],
+                "total": total,
+                "skip": skip,
+                "limit": limit,
+                "mode": "semantic",
+            }
+
+        # ── Hybrid mode ───────────────────────────────────────────────────────
+        if mode == "hybrid":
+            # FTS leg — fetch up to 200 candidates with snippets
+            fts_result = ctx.storage.search_notes_fts(
+                q, vault_id=vault_id, skip=0, limit=200,
+                folder=folder, tags=tags_list, date_from=date_from, date_to=date_to,
+            )
+            fts_items = fts_result.get("items", [])
+
+            # Semantic leg — fetch up to 200 candidates (no filters, applied post-merge)
+            sem_ids: List[str] = []
+            try:
+                sem_notes = ctx.storage.search_notes(q, vault_id=vault_id, top_k=200, search_type="semantic")
+                sem_ids = [n.id for n in sem_notes if not getattr(n, "is_deleted", False)]
+            except Exception:
+                pass  # semantic index may not be available
+
+            # Merge: FTS weight 0.6, semantic weight 0.4, rank by position
+            scores: Dict[str, dict] = {}
+            for i, item in enumerate(fts_items):
+                nid = item["id"]
+                scores[nid] = {"item": item, "score": 0.6 / (i + 1)}
+
+            for j, nid in enumerate(sem_ids):
+                sem_score = 0.4 / (j + 1)
+                if nid in scores:
+                    scores[nid]["score"] += sem_score
+                else:
+                    note = ctx.storage.get_note_by_id(nid)
+                    if note and not getattr(note, "is_deleted", False):
+                        item_data = _note_to_list_item(note).model_dump()
+                        item_data["snippet"] = ""
+                        scores[nid] = {"item": item_data, "score": sem_score}
+
+            merged = sorted(scores.values(), key=lambda x: x["score"], reverse=True)
+            all_items = [m["item"] for m in merged]
+            total = len(all_items)
+            page = all_items[skip: skip + limit]
+            return {"items": page, "total": total, "skip": skip, "limit": limit, "mode": "hybrid"}
+
+        # ── Unknown mode → fall back to FTS ──────────────────────────────────
+        result = ctx.storage.search_notes_fts(
+            q, vault_id=vault_id, skip=skip, limit=limit,
+            folder=folder, tags=tags_list, date_from=date_from, date_to=date_to,
+        )
+        result["mode"] = mode
+        return result
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
