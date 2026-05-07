@@ -101,4 +101,4 @@ class OpenaiAI(AIInterface):
         self.max_tokens = max_tokens
 
     def search_context(self, query: str, top_k: int = 10) -> List[str]:
-        raise NotImplementedError("Use LoreaiAI plugin for search_context tasks.")
+        raise RuntimeError("OpenaiAI does not perform retrieval. Route 'search_context' through ModelRouter to the LoreAI backend.")

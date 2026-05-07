@@ -1,154 +1,284 @@
 """
-User management routes for MythosEngine FastAPI server (admin only).
+User management endpoints (admin only).
 
-Endpoints
----------
-GET  /users               — list all users
-GET  /users/{id}          — get a single user
-PUT  /users/{id}/roles    — update roles
-POST /users/{id}/disable  — disable account
-POST /users/{id}/enable   — enable account
+GET /users — list all users
+GET /users/{id} — get a single user
+PUT /users/{id}/roles — update user roles
+POST /users/{id}/disable — disable user
+POST /users/{id}/enable — enable user
 POST /users/{id}/reset-password — admin password reset
+
+NOTE: StorageBackend has no list_users() method. We query the SQLAlchemy
+UserRecord table directly through the storage engine.
 """
 
-from typing import List
+import json
+import logging
+from datetime import datetime
+from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
-from server.dependencies import get_ctx, require_admin
 
-router = APIRouter(prefix="/users", tags=["users"])
+from server.deps import get_ctx, get_current_user
+
+
+router = APIRouter()
+
+
+# ============================================================================
+# Request/Response models
+# ============================================================================
+
+
+class UserListItem(BaseModel):
+    """User item in list response"""
+    id: str
+    username: str
+    email: str
+    roles: List[str]
+    is_active: bool
+    last_login: Optional[datetime] = None
 
 
 class UpdateRolesRequest(BaseModel):
+    """Request body for PUT /users/{id}/roles"""
     roles: List[str]
 
 
 class ResetPasswordRequest(BaseModel):
+    """Request body for POST /users/{id}/reset-password"""
     new_password: str
 
+    @field_validator("new_password")
+    @classmethod
+    def check_password(cls, v):
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        if not any(c.isalpha() for c in v):
+            raise ValueError("Password must contain at least one letter")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Password must contain at least one number")
+        return v
 
-def _user_dict(user: User) -> dict:
-    return {
-        "id": user.id,
-        "email": user.email,
-        "username": user.username,
-        "roles": user.roles,
-        "groups": user.groups,
-        "is_active": user.is_active,
-        "last_login": user.last_login.isoformat() if user.last_login else None,
-    }
+
+# ============================================================================
+# Helper: Require admin
+# ============================================================================
 
 
-def _list_all_users(ctx: AppContext):
-    """Return all User objects. Works for both HybridStorage and SQLiteBackend."""
+def require_admin(user: User = Depends(get_current_user)):
+    """Dependency that ensures the user is an admin."""
+    if "admin" not in (user.roles or []):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return user
+
+
+def _list_all_users(ctx: AppContext) -> List[User]:
+    """
+    List all users by querying the SQLAlchemy storage directly.
+    StorageBackend doesn't have a list_users() method, so we access
+    the engine and UserRecord table.
+    """
+    users = []
     try:
-        from MythosEngine.storage.hybrid_storage import HybridStorage
+        # Access the SQLAlchemy engine from the storage backend
+        storage = ctx.storage
+        if hasattr(storage, "engine"):
+            from sqlalchemy.orm import Session as SASession
+            # Import the ORM model from the sqlite backend
+            from MythosEngine.storage.sqlite_backend import UserRecord
+            with SASession(storage.engine) as session:
+                for rec in session.query(UserRecord).all():
+                    try:
+                        user = User.model_validate_json(rec.data)
+                        users.append(user)
+                    except Exception as exc:
+                        logger.warning("_list_all_users: skipping corrupt user record: %s", exc)
+    except Exception as exc:
+        logger.error("_list_all_users: database query failed: %s", exc)
+    return users
 
-        if isinstance(ctx.storage, HybridStorage):
-            raw = ctx.storage._load_global("user")
-            return [User.model_validate(v) for v in raw.values()]
-    except Exception:
-        pass
+
+# ============================================================================
+# User management endpoints
+# ============================================================================
+
+
+@router.get("/", response_model=List[UserListItem])
+async def list_users(
+    ctx: AppContext = Depends(get_ctx),
+    admin: User = Depends(require_admin),
+):
+    """
+    List all users in the system. Requires admin role.
+    """
     try:
-        from MythosEngine.storage.sqlite_backend import SQLiteBackend, UserRecord
-
-        if isinstance(ctx.storage, SQLiteBackend):
-            with ctx.storage._session() as s:
-                return [User.model_validate_json(r.data) for r in s.query(UserRecord).all()]
-    except Exception:
-        pass
-    return []
-
-
-@router.get("")
-def list_users(
-    ctx: AppContext = Depends(get_ctx),
-    _admin: User = Depends(require_admin),
-):
-    users = _list_all_users(ctx)
-    return {"users": [_user_dict(u) for u in users]}
-
-
-@router.get("/{user_id}")
-def get_user(
-    user_id: str,
-    ctx: AppContext = Depends(get_ctx),
-    _admin: User = Depends(require_admin),
-):
-    user = ctx.users.get_user(user_id)
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
-    return _user_dict(user)
+        users = _list_all_users(ctx)
+        return [
+            UserListItem(
+                id=u.id,
+                username=u.username,
+                email=u.email,
+                roles=u.roles or [],
+                is_active=u.is_active,
+                last_login=getattr(u, "last_login", None),
+            )
+            for u in users
+        ]
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list users: {str(e)}",
+        )
 
 
-@router.put("/{user_id}/roles")
-def update_roles(
-    user_id: str,
-    body: UpdateRolesRequest,
-    ctx: AppContext = Depends(get_ctx),
-    _admin: User = Depends(require_admin),
-):
-    user = ctx.users.get_user(user_id)
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
-    user.roles = body.roles
-    ctx.users.update_user(user)
-    return _user_dict(user)
-
-
-@router.post("/{user_id}/disable", status_code=status.HTTP_204_NO_CONTENT)
-def disable_user(
+@router.get("/{user_id}", response_model=UserListItem)
+async def get_user(
     user_id: str,
     ctx: AppContext = Depends(get_ctx),
     admin: User = Depends(require_admin),
 ):
-    if user_id == admin.id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot disable your own account.",
-        )
+    """
+    Get a single user by ID. Requires admin role.
+    """
     user = ctx.users.get_user(user_id)
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
-    user.is_active = False
-    ctx.users.update_user(user)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+    return UserListItem(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        roles=user.roles or [],
+        is_active=user.is_active,
+        last_login=getattr(user, "last_login", None),
+    )
 
 
-@router.post("/{user_id}/enable", status_code=status.HTTP_204_NO_CONTENT)
-def enable_user(
+@router.put("/{user_id}/roles")
+async def update_user_roles(
+    user_id: str,
+    req: UpdateRolesRequest,
+    ctx: AppContext = Depends(get_ctx),
+    admin: User = Depends(require_admin),
+):
+    """
+    Update user roles. Requires admin role.
+    """
+    try:
+        user = ctx.users.get_user(user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+
+        user.roles = req.roles
+        ctx.users.update_user(user)
+        return {"message": "Roles updated successfully", "user_id": user.id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update roles: {str(e)}",
+        )
+
+
+@router.post("/{user_id}/disable")
+async def disable_user(
     user_id: str,
     ctx: AppContext = Depends(get_ctx),
-    _admin: User = Depends(require_admin),
+    admin: User = Depends(require_admin),
 ):
-    user = ctx.users.get_user(user_id)
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
-    user.is_active = True
-    ctx.users.update_user(user)
+    """
+    Disable a user (prevent login). Requires admin role.
+    """
+    try:
+        user = ctx.users.get_user(user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
 
-
-@router.post("/{user_id}/reset-password", status_code=status.HTTP_204_NO_CONTENT)
-def reset_password(
-    user_id: str,
-    body: ResetPasswordRequest,
-    ctx: AppContext = Depends(get_ctx),
-    _admin: User = Depends(require_admin),
-):
-    if len(body.new_password) < 8:
+        user.is_active = False
+        ctx.users.update_user(user)
+        return {"message": "User disabled successfully", "user_id": user.id}
+    except HTTPException:
+        raise
+    except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Password must be at least 8 characters.",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to disable user: {str(e)}",
         )
-    user = ctx.users.get_user(user_id)
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
-    import bcrypt
 
-    user.password_hash = bcrypt.hashpw(
-        body.new_password.encode("utf-8"), bcrypt.gensalt()
-    ).decode("utf-8")
-    ctx.users.update_user(user)
+
+@router.post("/{user_id}/enable")
+async def enable_user(
+    user_id: str,
+    ctx: AppContext = Depends(get_ctx),
+    admin: User = Depends(require_admin),
+):
+    """
+    Enable a previously disabled user. Requires admin role.
+    """
+    try:
+        user = ctx.users.get_user(user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+
+        user.is_active = True
+        ctx.users.update_user(user)
+        return {"message": "User enabled successfully", "user_id": user.id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to enable user: {str(e)}",
+        )
+
+
+@router.post("/{user_id}/reset-password")
+async def reset_password(
+    user_id: str,
+    req: ResetPasswordRequest,
+    ctx: AppContext = Depends(get_ctx),
+    admin: User = Depends(require_admin),
+):
+    """
+    Reset a user's password (admin action). Requires admin role.
+    """
+    try:
+        user = ctx.users.get_user(user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+
+        user.password_hash = ctx.users._hash_password(req.new_password)
+        ctx.users.update_user(user)
+        return {"message": "Password reset successfully", "user_id": user.id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to reset password: {str(e)}",
+        )

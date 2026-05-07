@@ -66,17 +66,43 @@ class IndexManager:
     def update_for_note(self, note_path):
         """
         Incrementally update the index for a specific note.
-        (Not implemented: LlamaIndex only recently added proper incremental update APIs.
-        Placeholder for future upgrades.)
+
+        Loads the file at note_path, removes any previously-indexed version
+        (keyed by its resolved absolute path), then inserts the fresh document.
+        Changes are persisted to disk immediately.
         """
-        pass
+        note_path = Path(note_path).resolve()
+        doc_id = str(note_path)
+
+        docs = SimpleDirectoryReader(input_files=[str(note_path)]).load_data()
+        if not docs:
+            return
+
+        for doc in docs:
+            doc.id_ = doc_id
+
+        try:
+            self.index.delete_ref_doc(doc_id, delete_from_docstore=True)
+        except Exception:
+            pass  # Not yet indexed — safe to ignore
+
+        for doc in docs:
+            self.index.insert(doc)
+        self.index.storage_context.persist(persist_dir=self.index_dir)
+        self._retriever = self.index.as_retriever()
 
     def delete_note(self, note_id):
         """
-        Remove a note from the index.
-        (Not implemented: Placeholder for future if/when llama_index supports live removal.)
+        Remove a note from the index by its doc id (resolved absolute path).
+
+        Changes are persisted to disk immediately.
         """
-        pass
+        try:
+            self.index.delete_ref_doc(str(note_id), delete_from_docstore=True)
+            self.index.storage_context.persist(persist_dir=self.index_dir)
+            self._retriever = self.index.as_retriever()
+        except Exception:
+            pass  # Note was not in the index — nothing to do
 
     def get_index(self):
         """Direct access to the underlying index (if needed for advanced ops)."""

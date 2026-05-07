@@ -39,16 +39,16 @@ class LoreaiAI(AIInterface):
         pass  # embedding model changes require an index rebuild; handled separately
 
     def ask(self, prompt: str) -> Tuple[str, int, int]:
-        raise NotImplementedError("Use a dedicated LLM engine for 'ask' via ModelRouter.")
+        raise RuntimeError("LoreaiAI is a retrieval-only engine. Route 'ask' through ModelRouter to an LLM backend.")
 
     def summarize(self, text: str) -> Tuple[str, int, int]:
-        raise NotImplementedError("Use a dedicated summarization engine via ModelRouter.")
+        raise RuntimeError("LoreaiAI is a retrieval-only engine. Route 'summarize' through ModelRouter to an LLM backend.")
 
     def suggest_tags(self, text: str) -> Tuple[str, int, int]:
-        raise NotImplementedError("Use a dedicated tagging engine via ModelRouter.")
+        raise RuntimeError("LoreaiAI is a retrieval-only engine. Route 'suggest_tags' through ModelRouter to an LLM backend.")
 
     def propose_links(self, text: str, note_names: List[str]) -> Tuple[str, int, int]:
-        raise NotImplementedError("Use a dedicated link-proposal engine via ModelRouter.")
+        raise RuntimeError("LoreaiAI is a retrieval-only engine. Route 'propose_links' through ModelRouter to an LLM backend.")
 
     def search_context(self, query: str, top_k: int = 10) -> List[str]:
         """Retrieve up to top_k relevant note IDs for the given query."""
