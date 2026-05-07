@@ -13,11 +13,31 @@ The Electron ``main.cjs`` starts this automatically in production.
 """
 
 import logging
+import sys
 import traceback
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+
+# Add parent directory so MythosEngine package is importable
+_parent = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_parent))
+
+# AppContext imports AuthManager which inherits QObject.
+# QObject needs a QCoreApplication — create a headless one for the API server.
+try:
+    from PyQt6.QtCore import QCoreApplication
+    _qt_app = QCoreApplication.instance()
+    if _qt_app is None:
+        _qt_app = QCoreApplication(sys.argv)
+except ImportError:
+    _qt_app = None  # PyQt6 not installed — AuthManager won't work but that's OK
 from fastapi.responses import JSONResponse
 
 from MythosEngine.config.config import Config
@@ -25,6 +45,7 @@ from MythosEngine.context.app_context import AppContext
 from server.dependencies import set_app_context
 from server.routes import ai, auth, dashboard, debug, invites, notes, settings, users
 
+from server.middleware.logging import LoggingMiddleware
 logger = logging.getLogger(__name__)
 
 
@@ -77,6 +98,8 @@ app = FastAPI(
     description="REST API for the MythosEngine D&D campaign management platform.",
     lifespan=lifespan,
 )
+
+app.add_middleware(LoggingMiddleware)
 
 # Allow the Vite dev server (port 5173) and production Electron renderer
 app.add_middleware(

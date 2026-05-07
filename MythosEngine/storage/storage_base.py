@@ -133,6 +133,10 @@ class StorageBackend(ABC):
     def delete_note_by_id(self, note_id: str) -> None:
         pass
 
+    def soft_delete_note(self, note_id: str) -> None:
+        """Soft-delete a note. Subclasses should override; default falls back to hard delete."""
+        self.delete_note_by_id(note_id)
+
     @abstractmethod
     def save_character(self, character: Character) -> None:
         pass
