@@ -96,7 +96,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Dashboard user={user} />} />
             <Route path="/chat" element={<Chat />} />
-            <Route path="/browse" element={<Browse />} />
+            <Route path="/browse" element={<Browse user={user} />} />
             <Route path="/create" element={<Create />} />
             <Route path="/universe" element={<Universe />} />
             <Route path="/settings" element={<Settings user={user} />} />

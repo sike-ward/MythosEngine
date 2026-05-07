@@ -4,7 +4,7 @@ import Card from '@/components/Card';
 import Button from '@/components/Button';
 import Input from '@/components/Input';
 import Badge from '@/components/Badge';
-import { auth, settings, users, invites } from '@/api';
+import { auth, settings, users, invites, debug } from '@/api';
 import { THEMES, applyTheme, getStoredTheme } from '@/theme';
 
 export default function Settings({ user }) {
@@ -45,6 +45,12 @@ export default function Settings({ user }) {
   const [resetUserId, setResetUserId] = useState(null);
   const [resetNewPassword, setResetNewPassword] = useState('');
 
+  // Debug log viewer (admin only)
+  const [crashLogs, setCrashLogs] = useState([]);
+  const [runtimeLog, setRuntimeLog] = useState('');
+  const [selectedLog, setSelectedLog] = useState(null); // { name, content }
+  const [debugLoading, setDebugLoading] = useState(false);
+
   // Load settings from backend on mount (theme excluded — localStorage is source of truth)
   useEffect(() => {
     const loadSettings = async () => {
@@ -71,6 +77,9 @@ export default function Settings({ user }) {
     if (activeTab === 'users' && isAdmin) {
       loadUsers();
       loadInvites();
+    }
+    if (activeTab === 'debug' && isAdmin) {
+      loadDebugLogs();
     }
   }, [activeTab]);
 
@@ -239,6 +248,43 @@ export default function Settings({ user }) {
     }
   };
 
+  const loadDebugLogs = async () => {
+    setDebugLoading(true);
+    try {
+      const [logs, log] = await Promise.all([
+        debug.listCrashLogs(),
+        debug.getRuntimeLog(),
+      ]);
+      setCrashLogs(logs);
+      setRuntimeLog(log.content || '');
+    } catch (err) {
+      console.error('Failed to load debug logs:', err);
+    } finally {
+      setDebugLoading(false);
+    }
+  };
+
+  const handleViewCrashLog = async (filename) => {
+    try {
+      const data = await debug.getCrashLog(filename);
+      setSelectedLog({ name: filename, content: data.content || '' });
+    } catch (err) {
+      showSaveStatus('Failed to load log: ' + err.message);
+    }
+  };
+
+  const handleDeleteCrashLog = async (filename) => {
+    if (!confirm(`Delete crash log "${filename}"?`)) return;
+    try {
+      await debug.deleteCrashLog(filename);
+      setCrashLogs((prev) => prev.filter((l) => l.name !== filename));
+      if (selectedLog?.name === filename) setSelectedLog(null);
+      showSaveStatus('Log deleted');
+    } catch (err) {
+      showSaveStatus('Failed to delete: ' + err.message);
+    }
+  };
+
   const handleCopyInvite = (code) => {
     navigator.clipboard.writeText(code).then(() => {
       showSaveStatus('Copied to clipboard!');
@@ -291,6 +337,9 @@ export default function Settings({ user }) {
             <NavItem id="help" label="Help & About" />
             {isAdmin && (
               <NavItem id="users" label="User Management" />
+            )}
+            {isAdmin && (
+              <NavItem id="debug" label="Debug Logs" />
             )}
           </nav>
         </div>
@@ -604,6 +653,78 @@ export default function Settings({ user }) {
                     🐛 Report Issue
                   </Button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* Debug Logs */}
+          {activeTab === 'debug' && isAdmin && (
+            <div className="space-y-6">
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-bold text-txt">Crash Logs</h3>
+                  <Button variant="secondary" size="sm" onClick={loadDebugLogs} disabled={debugLoading}>
+                    {debugLoading ? 'Loading…' : 'Refresh'}
+                  </Button>
+                </div>
+
+                {debugLoading ? (
+                  <p className="text-txt-muted text-sm">Loading logs...</p>
+                ) : crashLogs.length === 0 ? (
+                  <div className="bg-elevated rounded-xl p-4 text-center">
+                    <p className="text-txt-muted text-sm">No crash logs found.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {crashLogs.map((log) => (
+                      <div
+                        key={log.name}
+                        className="flex items-center gap-3 bg-elevated rounded-xl px-4 py-3"
+                      >
+                        <span className="text-txt text-sm font-mono flex-1 truncate">{log.name}</span>
+                        <span className="text-txt-muted text-xs flex-shrink-0">
+                          {(log.size / 1024).toFixed(1)} KB
+                        </span>
+                        <Button variant="secondary" size="sm" onClick={() => handleViewCrashLog(log.name)}>
+                          View
+                        </Button>
+                        <Button variant="danger" size="sm" onClick={() => handleDeleteCrashLog(log.name)}>
+                          Delete
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Crash log viewer modal */}
+              {selectedLog && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
+                  <div className="bg-card rounded-2xl shadow-2xl w-full max-w-3xl max-h-[80vh] flex flex-col">
+                    <div className="flex items-center justify-between px-6 py-4 border-b border-txt-muted/20">
+                      <h3 className="text-base font-bold text-txt font-mono">{selectedLog.name}</h3>
+                      <Button variant="ghost" size="sm" onClick={() => setSelectedLog(null)}>
+                        Close
+                      </Button>
+                    </div>
+                    <pre className="flex-1 overflow-auto p-6 text-xs text-txt-secondary font-mono leading-relaxed whitespace-pre-wrap">
+                      {selectedLog.content}
+                    </pre>
+                  </div>
+                </div>
+              )}
+
+              {/* Runtime log */}
+              <div className="border-t border-txt-muted/20 pt-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-bold text-txt">Runtime Log</h3>
+                  <Button variant="secondary" size="sm" onClick={loadDebugLogs} disabled={debugLoading}>
+                    Refresh
+                  </Button>
+                </div>
+                <pre className="bg-elevated rounded-xl p-4 text-xs text-txt-secondary font-mono leading-relaxed whitespace-pre-wrap overflow-auto max-h-96">
+                  {runtimeLog || 'No runtime log available.'}
+                </pre>
               </div>
             </div>
           )}

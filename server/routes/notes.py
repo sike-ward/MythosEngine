@@ -23,8 +23,11 @@ We use search_notes("") or get_note_by_id() for Note objects, and the
 NoteManager / FolderManager for all CRUD.
 """
 
+import logging
 from typing import Optional, List, Dict
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel, Field
@@ -304,8 +307,8 @@ async def list_folders(
                         created_at=meta.get("created_at", datetime.utcnow()),
                         last_modified=meta.get("last_modified", datetime.utcnow()),
                     ))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("list_folders: inner folder enumeration failed: %s", exc)
 
         return results
     except Exception as e:
@@ -476,8 +479,8 @@ async def delete_note(
                 detail="Access denied",
             )
 
-        ctx.notes.delete_note(note_id, actor_id=user.id)
-        return {"message": "Note deleted successfully"}
+        ctx.storage.soft_delete_note(note_id)
+        return {"deleted": True, "path": note_id}
     except HTTPException:
         raise
     except Exception as e:

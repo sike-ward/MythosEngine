@@ -13,8 +13,11 @@ UserRecord table directly through the storage engine.
 """
 
 import json
+import logging
 from datetime import datetime
 from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
@@ -22,7 +25,7 @@ from pydantic import BaseModel, field_validator
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
 
-from server.deps import get_ctx, get_current_user
+from server.deps import get_ctx, get_current_user, require_permission
 
 
 router = APIRouter()
@@ -64,21 +67,6 @@ class ResetPasswordRequest(BaseModel):
         return v
 
 
-# ============================================================================
-# Helper: Require admin
-# ============================================================================
-
-
-def require_admin(user: User = Depends(get_current_user)):
-    """Dependency that ensures the user is an admin."""
-    if "admin" not in (user.roles or []):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
-        )
-    return user
-
-
 def _list_all_users(ctx: AppContext) -> List[User]:
     """
     List all users by querying the SQLAlchemy storage directly.
@@ -98,10 +86,10 @@ def _list_all_users(ctx: AppContext) -> List[User]:
                     try:
                         user = User.model_validate_json(rec.data)
                         users.append(user)
-                    except Exception:
-                        pass
-    except Exception:
-        pass
+                    except Exception as exc:
+                        logger.warning("_list_all_users: skipping corrupt user record: %s", exc)
+    except Exception as exc:
+        logger.error("_list_all_users: database query failed: %s", exc)
     return users
 
 
@@ -113,7 +101,7 @@ def _list_all_users(ctx: AppContext) -> List[User]:
 @router.get("/", response_model=List[UserListItem])
 async def list_users(
     ctx: AppContext = Depends(get_ctx),
-    admin: User = Depends(require_admin),
+    admin: User = require_permission("admin"),
 ):
     """
     List all users in the system. Requires admin role.
@@ -142,7 +130,7 @@ async def list_users(
 async def get_user(
     user_id: str,
     ctx: AppContext = Depends(get_ctx),
-    admin: User = Depends(require_admin),
+    admin: User = require_permission("admin"),
 ):
     """
     Get a single user by ID. Requires admin role.
@@ -168,7 +156,7 @@ async def update_user_roles(
     user_id: str,
     req: UpdateRolesRequest,
     ctx: AppContext = Depends(get_ctx),
-    admin: User = Depends(require_admin),
+    admin: User = require_permission("admin"),
 ):
     """
     Update user roles. Requires admin role.
@@ -197,7 +185,7 @@ async def update_user_roles(
 async def disable_user(
     user_id: str,
     ctx: AppContext = Depends(get_ctx),
-    admin: User = Depends(require_admin),
+    admin: User = require_permission("admin"),
 ):
     """
     Disable a user (prevent login). Requires admin role.
@@ -226,7 +214,7 @@ async def disable_user(
 async def enable_user(
     user_id: str,
     ctx: AppContext = Depends(get_ctx),
-    admin: User = Depends(require_admin),
+    admin: User = require_permission("admin"),
 ):
     """
     Enable a previously disabled user. Requires admin role.
@@ -256,7 +244,7 @@ async def reset_password(
     user_id: str,
     req: ResetPasswordRequest,
     ctx: AppContext = Depends(get_ctx),
-    admin: User = Depends(require_admin),
+    admin: User = require_permission("admin"),
 ):
     """
     Reset a user's password (admin action). Requires admin role.

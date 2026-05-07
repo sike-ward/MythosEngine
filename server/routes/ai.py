@@ -1,52 +1,41 @@
 """
-AI endpoints.
+AI routes for MythosEngine FastAPI server.
 
+Endpoints
+---------
 GET  /ai/status       — readiness check (always available, no auth required)
-POST /ai/ask          — ask the AI a question with vault context
-POST /ai/summarize    — summarize text
-POST /ai/suggest-tags — suggest tags for text
+POST /ai/ask          — ask a question about vault lore
+POST /ai/summarize    — summarize a block of text
+POST /ai/suggest-tags — suggest tags for a note
 """
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
-
 from server.deps import get_ctx, get_current_user
 from server.limiter import limiter
 
 
-router = APIRouter()
-
-
-# ============================================================================
-# Request/Response models
-# ============================================================================
+router = APIRouter(prefix="/ai", tags=["ai"])
 
 
 class AskRequest(BaseModel):
-    """Request body for POST /ai/ask"""
     prompt: str
-    vault_id: Optional[str] = None
 
 
 class AskResponse(BaseModel):
-    """Response body for POST /ai/ask"""
     response: str
     prompt_tokens: int
     completion_tokens: int
 
 
 class SummarizeRequest(BaseModel):
-    """Request body for POST /ai/summarize"""
     text: str
 
 
 class SummarizeResponse(BaseModel):
-    """Response body for POST /ai/summarize"""
     summary: str
     prompt_tokens: int
     completion_tokens: int
@@ -55,7 +44,7 @@ class SummarizeResponse(BaseModel):
 class SuggestTagsRequest(BaseModel):
     """Request body for POST /ai/suggest-tags"""
     text: str
-    existing_tags: list[str] = []
+    existing_tags: list[str] = Field(default_factory=list)
 
 
 class SuggestTagsResponse(BaseModel):
@@ -63,11 +52,6 @@ class SuggestTagsResponse(BaseModel):
     tags: list[str]
     prompt_tokens: int
     completion_tokens: int
-
-
-# ============================================================================
-# Dependencies
-# ============================================================================
 
 
 def require_index_ready(ctx: AppContext = Depends(get_ctx)) -> None:
@@ -79,16 +63,8 @@ def require_index_ready(ctx: AppContext = Depends(get_ctx)) -> None:
         )
 
 
-# ============================================================================
-# AI endpoints
-# ============================================================================
-
-
 @router.get("/status")
-async def ai_status(
-    ctx: AppContext = Depends(get_ctx),
-):
-    """Return AI engine and index readiness status. Always available."""
+async def ai_status(ctx: AppContext = Depends(get_ctx)):
     return {
         "ready": ctx.has_ai(),
         "index_built": getattr(ctx.ai, "_index_ready", False) if ctx.has_ai() else False,
@@ -99,121 +75,66 @@ async def ai_status(
 @limiter.limit("20/minute")
 async def ask(
     request: Request,
-    req: AskRequest,
+    body: AskRequest,
     ctx: AppContext = Depends(get_ctx),
-    user: User = Depends(get_current_user),
+    _user: User = Depends(get_current_user),
     _: None = Depends(require_index_ready),
 ):
-    """
-    Ask the AI a question, optionally with vault context.
-
-    If vault_id is provided, the AI will include relevant notes from that vault
-    in its context for a more informed response.
-
-    Requires authentication, an initialised AI engine, and a built index.
-    """
-    try:
-        if not ctx.has_ai():
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="AI engine not available",
-            )
-
-        ai = ctx.require_ai()
-        response, prompt_tokens, completion_tokens = ai.ask(req.prompt)
-
-        return AskResponse(
-            response=response,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
+    if not ctx.has_ai():
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"AI request failed: {str(e)}",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI engine is not configured. Set OPENAI_API_KEY in .env.",
         )
+    answer, prompt_tokens, completion_tokens = ctx.ai.ask(body.prompt)
+    return {
+        "response": answer,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+    }
 
 
 @router.post("/summarize", response_model=SummarizeResponse)
 @limiter.limit("20/minute")
 async def summarize(
     request: Request,
-    req: SummarizeRequest,
+    body: SummarizeRequest,
     ctx: AppContext = Depends(get_ctx),
-    user: User = Depends(get_current_user),
+    _user: User = Depends(get_current_user),
     _: None = Depends(require_index_ready),
 ):
-    """
-    Summarize the provided text using the AI engine.
-
-    Requires authentication, an initialised AI engine, and a built index.
-    """
-    try:
-        if not ctx.has_ai():
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="AI engine not available",
-            )
-
-        ai = ctx.require_ai()
-        summary, prompt_tokens, completion_tokens = ai.summarize(req.text)
-
-        return SummarizeResponse(
-            summary=summary,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
+    if not ctx.has_ai():
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Summarization failed: {str(e)}",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI engine is not configured. Set OPENAI_API_KEY in .env.",
         )
+    summary, prompt_tokens, completion_tokens = ctx.ai.summarize(body.text)
+    return {
+        "summary": summary,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+    }
 
 
 @router.post("/suggest-tags", response_model=SuggestTagsResponse)
 @limiter.limit("20/minute")
 async def suggest_tags(
     request: Request,
-    req: SuggestTagsRequest,
+    body: SuggestTagsRequest,
     ctx: AppContext = Depends(get_ctx),
-    user: User = Depends(get_current_user),
+    _user: User = Depends(get_current_user),
     _: None = Depends(require_index_ready),
 ):
-    """
-    Suggest tags for text using the AI engine.
-
-    Optionally pass existing_tags to avoid duplicates and maintain consistency.
-
-    Requires authentication, an initialised AI engine, and a built index.
-    """
-    try:
-        if not ctx.has_ai():
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="AI engine not available",
-            )
-
-        ai = ctx.require_ai()
-        tags, prompt_tokens, completion_tokens = ai.suggest_tags(req.text)
-
-        # Filter out existing tags if any
-        if req.existing_tags:
-            existing_lower = {tag.lower() for tag in req.existing_tags}
-            tags = [tag for tag in tags if tag.lower() not in existing_lower]
-
-        return SuggestTagsResponse(
-            tags=tags,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
+    if not ctx.has_ai():
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Tag suggestion failed: {str(e)}",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI engine is not configured. Set OPENAI_API_KEY in .env.",
         )
+    tags, prompt_tokens, completion_tokens = ctx.ai.suggest_tags(body.text)
+    if body.existing_tags:
+        existing_lower = {tag.lower() for tag in body.existing_tags}
+        tags = [tag for tag in tags if tag.lower() not in existing_lower]
+    return {
+        "tags": tags,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+    }

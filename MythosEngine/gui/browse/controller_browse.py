@@ -2,6 +2,8 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from MythosEngine.search.search_types import SearchQuery
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QDialog,
@@ -824,7 +826,8 @@ class BrowseController:
                     results.append(n)
 
         elif mode == "within":
-            results = self.storage.search_notes(query, top_k=100)
+            sq = SearchQuery(query_str=query, search_type="keyword", vault_id="")
+            results = [sr.note_path for sr in self.storage.search(sq)]
 
         else:
             results = []
