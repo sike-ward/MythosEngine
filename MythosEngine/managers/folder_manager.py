@@ -43,7 +43,7 @@ class FolderManager:
             last_modified=datetime.utcnow(),
             created_at=datetime.utcnow(),
             schema_version=1,
-            version=1,
+            record_version=1,
         )
         self.storage.save_folder(folder)
         return folder
@@ -53,7 +53,7 @@ class FolderManager:
 
     def update_folder(self, folder: Folder) -> None:
         folder.schema_version = max(folder.schema_version, 1)
-        folder.version += 1
+        folder.record_version += 1
         folder.last_modified = datetime.utcnow()
         self.storage.save_folder(folder)
 

@@ -202,6 +202,20 @@ def _get_default_vault_id(ctx: AppContext, user: User) -> str:
     return "default"
 
 
+def _set_user_ctx(ctx: AppContext, user: User) -> None:
+    """Set the per-request user context on the storage backend.
+
+    This must be called at the start of every route handler that reads or
+    writes user-owned data so that the storage-level ACL checks use the
+    correct identity.
+    """
+    ctx.storage.set_user_context(
+        user.id,
+        is_admin="admin" in (user.roles or []),
+        is_gm="gm" in (user.roles or []),
+    )
+
+
 def _get_note_or_404(ctx, note_id):
     """Get note by ID or raise 404."""
     note = ctx.notes.get_note(note_id)
@@ -254,11 +268,7 @@ async def search_notes(
     - ``hybrid``   — Runs both; merges results weighted FTS×0.6 + semantic×0.4
     """
     try:
-        ctx.storage.set_user_context(
-            user.id,
-            is_admin="admin" in (user.roles or []),
-            is_gm="gm" in (user.roles or []),
-        )
+        _set_user_ctx(ctx, user)
         vault_id = _get_default_vault_id(ctx, user)
         tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
 
@@ -361,45 +371,52 @@ async def list_folders(
 ):
     """List all folders."""
     try:
+        _set_user_ctx(ctx, user)
         results = []
 
-        # Try getting folders from FolderManager first (structured)
-        try:
-            # search_notes("") trick won't work for folders, so we use
-            # the storage's list_folders which returns paths
-            folder_paths = ctx.storage.list_folders() or []
-            for fpath in folder_paths:
-                # Try FolderManager first
-                folder_obj = None
-                try:
-                    folder_obj = ctx.folders.get_folder(fpath)
-                except Exception:
-                    pass
-
-                if folder_obj:
+        # Primary: query folders stored in the SQLite database
+        if hasattr(ctx.storage, "list_all_folders"):
+            try:
+                db_folders = ctx.storage.list_all_folders()
+                for folder_obj in db_folders:
                     results.append(_folder_to_response(folder_obj, ctx, user))
-                else:
-                    # File-based folder — build response from path
-                    name = fpath.rsplit("/", 1)[-1] if "/" in fpath else fpath
-                    name = name.rsplit("\\", 1)[-1] if "\\" in name else name
-                    meta = {}
+            except Exception as exc:
+                logger.warning("list_folders: DB folder enumeration failed: %s", exc)
+
+        # Fallback: enumerate filesystem directories (legacy / Obsidian vaults)
+        if not results:
+            try:
+                folder_paths = ctx.storage.list_folders() or []
+                for fpath in folder_paths:
+                    folder_obj = None
                     try:
-                        meta = ctx.storage.get_folder_metadata(fpath)
+                        folder_obj = ctx.folders.get_folder(fpath)
                     except Exception:
                         pass
 
-                    results.append(FolderResponse(
-                        id=fpath,
-                        name=name,
-                        vault_id=_get_default_vault_id(ctx, user),
-                        parent_id=None,
-                        description=None,
-                        note_ids=[],
-                        created_at=meta.get("created_at", datetime.utcnow()),
-                        last_modified=meta.get("last_modified", datetime.utcnow()),
-                    ))
-        except Exception as exc:
-            logger.warning("list_folders: inner folder enumeration failed: %s", exc)
+                    if folder_obj:
+                        results.append(_folder_to_response(folder_obj, ctx, user))
+                    else:
+                        name = fpath.rsplit("/", 1)[-1] if "/" in fpath else fpath
+                        name = name.rsplit("\\", 1)[-1] if "\\" in name else name
+                        meta = {}
+                        try:
+                            meta = ctx.storage.get_folder_metadata(fpath)
+                        except Exception:
+                            pass
+
+                        results.append(FolderResponse(
+                            id=fpath,
+                            name=name,
+                            vault_id=_get_default_vault_id(ctx, user),
+                            parent_id=None,
+                            description=None,
+                            note_ids=[],
+                            created_at=meta.get("created_at", datetime.utcnow()),
+                            last_modified=meta.get("last_modified", datetime.utcnow()),
+                        ))
+            except Exception as exc:
+                logger.warning("list_folders: filesystem enumeration failed: %s", exc)
 
         return results
     except Exception as e:
@@ -420,31 +437,30 @@ async def list_notes(
 ):
     """List notes, optionally filtered by folder and/or tag. Returns paginated response."""
     try:
-        ctx.storage.set_user_context(
-            user.id,
-            is_admin="admin" in (user.roles or []),
-            is_gm="gm" in (user.roles or []),
-        )
+        _set_user_ctx(ctx, user)
 
-        all_notes = ctx.storage.search_notes("", top_k=10000)
+        # Primary: query notes directly from the SQLite database.
+        # This covers all notes created via the API (which have no .md file on disk).
+        if hasattr(ctx.storage, "list_all_notes"):
+            all_notes = ctx.storage.list_all_notes(folder=folder, tag=tag)
+            # list_all_notes already filters by folder and tag; skip redundant filters.
+            all_notes = [n for n in all_notes if not getattr(n, "is_deleted", False)]
+        else:
+            # Fallback for non-SQLite backends: file-based search
+            all_notes = ctx.storage.search_notes("", top_k=10000)
 
-        # Filter by folder
-        if folder:
-            all_notes = [
-                n for n in all_notes
-                if getattr(n, "folder_id", None) == folder
-                or n.id.startswith(folder)
-            ]
-
-        # Filter by tag
-        if tag:
-            all_notes = [
-                n for n in all_notes
-                if tag.lower() in [t.lower() for t in (getattr(n, "tags", []) or [])]
-            ]
-
-        # Exclude soft-deleted
-        all_notes = [n for n in all_notes if not getattr(n, "is_deleted", False)]
+            if folder:
+                all_notes = [
+                    n for n in all_notes
+                    if getattr(n, "folder_id", None) == folder
+                    or n.id.startswith(folder)
+                ]
+            if tag:
+                all_notes = [
+                    n for n in all_notes
+                    if tag.lower() in [t.lower() for t in (getattr(n, "tags", []) or [])]
+                ]
+            all_notes = [n for n in all_notes if not getattr(n, "is_deleted", False)]
 
         # Sort by last_modified descending
         all_notes.sort(key=lambda n: n.last_modified, reverse=True)
@@ -473,6 +489,7 @@ async def get_note(
 ):
     """Get a specific note by ID with full content and metadata."""
     try:
+        _set_user_ctx(ctx, user)
         note = _get_note_or_404(ctx, note_id)
         return _note_to_detail(note)
     except HTTPException:
@@ -492,6 +509,7 @@ async def create_note(
 ):
     """Create a new note."""
     try:
+        _set_user_ctx(ctx, user)
         vault_id = _get_default_vault_id(ctx, user)
         note = ctx.notes.create_note(
             vault_id=vault_id,
@@ -523,6 +541,7 @@ async def update_note(
 ):
     """Update an existing note — any combination of fields."""
     try:
+        _set_user_ctx(ctx, user)
         note = _get_note_or_404(ctx, note_id)
 
         if req.title is not None:
@@ -561,6 +580,7 @@ async def delete_note(
 ):
     """Delete a note."""
     try:
+        _set_user_ctx(ctx, user)
         note = _get_note_or_404(ctx, note_id)
 
         is_admin = "admin" in (user.roles or [])
@@ -589,6 +609,7 @@ async def move_note(
 ):
     """Move a note to a different folder."""
     try:
+        _set_user_ctx(ctx, user)
         note = _get_note_or_404(ctx, req.note_id)
 
         is_admin = "admin" in (user.roles or [])
@@ -624,6 +645,7 @@ async def add_tag(
 ):
     """Add a tag to a note."""
     try:
+        _set_user_ctx(ctx, user)
         try:
             ctx.notes.add_tag(note_id, req.tag)
             note = ctx.notes.get_note(note_id)
@@ -653,6 +675,7 @@ async def remove_tag(
 ):
     """Remove a tag from a note."""
     try:
+        _set_user_ctx(ctx, user)
         try:
             ctx.notes.remove_tag(note_id, tag)
             note = ctx.notes.get_note(note_id)
@@ -686,6 +709,7 @@ async def update_meta(
 ):
     """Update note metadata (merge into existing meta dict)."""
     try:
+        _set_user_ctx(ctx, user)
         note = _get_note_or_404(ctx, note_id)
         existing_meta = getattr(note, "meta", {}) or {}
         # Merge: new values override, null values remove keys
@@ -719,6 +743,7 @@ async def create_folder(
 ):
     """Create a new folder."""
     try:
+        _set_user_ctx(ctx, user)
         vault_id = _get_default_vault_id(ctx, user)
         folder = ctx.folders.create_folder(
             vault_id=vault_id,
@@ -743,6 +768,7 @@ async def update_folder(
 ):
     """Rename or update a folder."""
     try:
+        _set_user_ctx(ctx, user)
         folder = ctx.folders.get_folder(folder_id)
         if not folder:
             raise HTTPException(
@@ -774,6 +800,7 @@ async def delete_folder(
 ):
     """Delete a folder."""
     try:
+        _set_user_ctx(ctx, user)
         folder = ctx.folders.get_folder(folder_id)
         if not folder:
             if ctx.storage.folder_exists(folder_id):

@@ -106,12 +106,15 @@ export const auth = {
 
 // ── Notes ────────────────────────────────────────────────────────────────────
 export const notes = {
-  list: (folder = "", tag = "") => {
+  list: async (folder = "", tag = "") => {
     const params = new URLSearchParams();
     if (folder) params.set("folder", folder);
     if (tag) params.set("tag", tag);
     const qs = params.toString();
-    return request("GET", `/notes${qs ? `?${qs}` : ""}`);
+    const res = await request("GET", `/notes${qs ? `?${qs}` : ""}`);
+    // The backend returns a paginated envelope {items, total, skip, limit}.
+    // Unwrap to a plain array so callers can use it directly.
+    return Array.isArray(res) ? res : (res?.items ?? []);
   },
   get: (id) => request("GET", `/notes/${encodeURIComponent(id)}`),
   search: (query, options = {}) => {
