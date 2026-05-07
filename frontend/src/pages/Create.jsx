@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { toast } from 'sonner';
 import SectionHeader from '@/components/SectionHeader';
 import Card from '@/components/Card';
 import Button from '@/components/Button';
@@ -20,7 +21,6 @@ export default function Create() {
   const [activeTab, setActiveTab] = useState('random');
   const [output, setOutput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [saveStatus, setSaveStatus] = useState('');
 
   // ── Random Generator state ───────────────────────────────────────────
   const [prompt, setPrompt] = useState('');
@@ -41,20 +41,13 @@ export default function Create() {
   const [questHook, setQuestHook] = useState('');
   const [questTwist, setQuestTwist] = useState('');
 
-  // ── Shared helpers ───────────────────────────────────────────────────
-
-  const flash = (msg) => {
-    setSaveStatus(msg);
-    setTimeout(() => setSaveStatus(''), 3000);
-  };
-
   const handleSaveToVault = async (title, content, tags = []) => {
     if (!content) return;
     try {
       await notes.create(title, content, null, tags);
-      flash('Saved to vault!');
+      toast.success('Saved to vault!');
     } catch (err) {
-      flash('Failed to save: ' + err.message);
+      toast.error('Failed to save: ' + err.message);
     }
   };
 
@@ -63,12 +56,13 @@ export default function Create() {
   const handleGenerate = async () => {
     if (!prompt.trim() || loading) return;
     setLoading(true);
-    setSaveStatus('');
+    setOutput('');
     try {
       const response = await ai.ask(`Generate a D&D ${category}: ${prompt}`);
       setOutput(response.response);
     } catch (err) {
-      setOutput(`Error: ${err.message}`);
+      toast.error('Generation failed: ' + err.message);
+      setOutput('');
     } finally {
       setLoading(false);
     }
@@ -79,10 +73,9 @@ export default function Create() {
   const handleGenerateNPC = async () => {
     if (loading) return;
     setLoading(true);
-    setSaveStatus('');
+    setOutput('');
 
-    const parts = [];
-    parts.push('Create a detailed D&D NPC with the following details:');
+    const parts = ['Create a detailed D&D NPC with the following details:'];
     if (npcName) parts.push(`Name: ${npcName}`);
     if (npcRace) parts.push(`Race: ${npcRace}`);
     if (npcClass) parts.push(`Class/Occupation: ${npcClass}`);
@@ -96,7 +89,7 @@ export default function Create() {
       const response = await ai.ask(parts.join('\n'));
       setOutput(response.response);
     } catch (err) {
-      setOutput(`Error: ${err.message}`);
+      toast.error('NPC generation failed: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -107,10 +100,9 @@ export default function Create() {
   const handleGenerateQuest = async () => {
     if (loading) return;
     setLoading(true);
-    setSaveStatus('');
+    setOutput('');
 
-    const parts = [];
-    parts.push(`Design a ${questDifficulty} difficulty D&D quest of type: ${questType}`);
+    const parts = [`Design a ${questDifficulty} difficulty D&D quest of type: ${questType}`];
     if (questSetting) parts.push(`Setting: ${questSetting}`);
     if (questHook) parts.push(`Hook/Premise: ${questHook}`);
     if (questTwist) parts.push(`Twist/Complication: ${questTwist}`);
@@ -121,7 +113,7 @@ export default function Create() {
       const response = await ai.ask(parts.join('\n'));
       setOutput(response.response);
     } catch (err) {
-      setOutput(`Error: ${err.message}`);
+      toast.error('Quest generation failed: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -133,21 +125,16 @@ export default function Create() {
 
   return (
     <div className="p-6 space-y-4 flex flex-col h-full">
-      <SectionHeader
-        title="✨ Create"
-        subtitle="Build your world with AI-powered tools."
-      />
+      <SectionHeader title="✨ Create" subtitle="Build your world with AI-powered tools." />
 
       {/* Tab Bar */}
       <div className="flex gap-1">
         {TABS.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => { setActiveTab(tab.id); setOutput(''); setSaveStatus(''); }}
+            onClick={() => { setActiveTab(tab.id); setOutput(''); }}
             className={`px-5 py-2.5 rounded-lg font-medium transition ${
-              activeTab === tab.id
-                ? 'bg-card text-accent'
-                : 'text-txt-muted hover:text-txt'
+              activeTab === tab.id ? 'bg-card text-accent' : 'text-txt-muted hover:text-txt'
             }`}
           >
             {tab.label}
@@ -188,12 +175,7 @@ export default function Create() {
                   <option value="tavern">Tavern / Shop</option>
                 </select>
               </div>
-              <Button
-                variant="primary"
-                onClick={handleGenerate}
-                disabled={loading || !prompt.trim()}
-                className="w-full"
-              >
+              <Button variant="primary" onClick={handleGenerate} disabled={loading || !prompt.trim()} className="w-full">
                 {loading ? 'Generating...' : 'Generate'}
               </Button>
             </>
@@ -210,11 +192,7 @@ export default function Create() {
               </div>
               <div>
                 <label className="block text-txt-muted text-sm mb-1.5 font-medium">Role</label>
-                <select
-                  value={npcRole}
-                  onChange={(e) => setNpcRole(e.target.value)}
-                  className="w-full bg-elevated rounded-xl px-4 py-3 text-txt border-2 border-transparent focus:border-accent focus:outline-none transition"
-                >
+                <select value={npcRole} onChange={(e) => setNpcRole(e.target.value)} className="w-full bg-elevated rounded-xl px-4 py-3 text-txt border-2 border-transparent focus:border-accent focus:outline-none transition">
                   <option value="ally">Ally</option>
                   <option value="enemy">Enemy / Villain</option>
                   <option value="neutral">Neutral</option>
@@ -239,11 +217,7 @@ export default function Create() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-txt-muted text-sm mb-1.5 font-medium">Quest Type</label>
-                  <select
-                    value={questType}
-                    onChange={(e) => setQuestType(e.target.value)}
-                    className="w-full bg-elevated rounded-xl px-4 py-3 text-txt border-2 border-transparent focus:border-accent focus:outline-none transition"
-                  >
+                  <select value={questType} onChange={(e) => setQuestType(e.target.value)} className="w-full bg-elevated rounded-xl px-4 py-3 text-txt border-2 border-transparent focus:border-accent focus:outline-none transition">
                     <option value="fetch">Fetch / Retrieve</option>
                     <option value="escort">Escort / Protect</option>
                     <option value="investigate">Investigate / Mystery</option>
@@ -257,11 +231,7 @@ export default function Create() {
                 </div>
                 <div>
                   <label className="block text-txt-muted text-sm mb-1.5 font-medium">Difficulty</label>
-                  <select
-                    value={questDifficulty}
-                    onChange={(e) => setQuestDifficulty(e.target.value)}
-                    className="w-full bg-elevated rounded-xl px-4 py-3 text-txt border-2 border-transparent focus:border-accent focus:outline-none transition"
-                  >
+                  <select value={questDifficulty} onChange={(e) => setQuestDifficulty(e.target.value)} className="w-full bg-elevated rounded-xl px-4 py-3 text-txt border-2 border-transparent focus:border-accent focus:outline-none transition">
                     <option value="easy">Easy (Tier 1)</option>
                     <option value="medium">Medium (Tier 2)</option>
                     <option value="hard">Hard (Tier 3)</option>
@@ -278,14 +248,15 @@ export default function Create() {
             </>
           )}
 
-          {/* Map Maker — placeholder */}
+          {/* Map Maker */}
           {activeTab === 'map' && (
             <>
               <h3 className="text-sm font-bold text-txt uppercase tracking-wider">🗺️ Map Maker</h3>
-              <div className="flex flex-col items-center justify-center py-10 space-y-3">
+              <div className="flex flex-col items-center justify-center py-10 space-y-4">
                 <div className="text-5xl">🗺️</div>
+                <p className="text-txt font-semibold text-center">Map Maker coming in a future update</p>
                 <p className="text-txt-muted text-sm text-center">
-                  Map generation coming soon. For now, use the Random Generator to create location descriptions.
+                  For now, use the Random Generator to create rich location descriptions.
                 </p>
                 <Button variant="secondary" size="sm" onClick={() => { setActiveTab('random'); setCategory('location'); }}>
                   Generate a Location
@@ -297,39 +268,30 @@ export default function Create() {
 
         {/* ── Right: Output ─────────────────────────────────────────── */}
         <Card className="flex-1 p-0 overflow-hidden flex flex-col">
-          {/* Output header */}
           <div className="px-5 py-3 border-b border-txt-muted/10 flex justify-between items-center">
             <h3 className="text-sm font-bold text-txt">Output</h3>
-            <div className="flex gap-2 items-center">
-              {saveStatus && (
-                <span className="text-accent text-xs font-medium">{saveStatus}</span>
-              )}
-              {output && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    const title = activeTab === 'npc'
-                      ? `NPC — ${npcName || 'Generated'}`
-                      : activeTab === 'quest'
-                        ? `Quest — ${questType} (${questDifficulty})`
-                        : `${category.charAt(0).toUpperCase() + category.slice(1)} — ${prompt.slice(0, 40)}`;
-                    const tags = activeTab === 'npc' ? ['npc', 'character'] : activeTab === 'quest' ? ['quest'] : [category];
-                    handleSaveToVault(title, output, tags);
-                  }}
-                >
-                  Save to Vault
-                </Button>
-              )}
-            </div>
+            {output && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  const title = activeTab === 'npc'
+                    ? `NPC — ${npcName || 'Generated'}`
+                    : activeTab === 'quest'
+                      ? `Quest — ${questType} (${questDifficulty})`
+                      : `${category.charAt(0).toUpperCase() + category.slice(1)} — ${prompt.slice(0, 40)}`;
+                  const tags = activeTab === 'npc' ? ['npc', 'character'] : activeTab === 'quest' ? ['quest'] : [category];
+                  handleSaveToVault(title, output, tags);
+                }}
+              >
+                Save to Vault
+              </Button>
+            )}
           </div>
 
-          {/* Output content */}
           <div className="flex-1 overflow-y-auto p-5">
             {output ? (
-              <div className="text-txt whitespace-pre-wrap text-sm leading-relaxed">
-                {output}
-              </div>
+              <div className="text-txt whitespace-pre-wrap text-sm leading-relaxed">{output}</div>
             ) : (
               <div className="h-full flex items-center justify-center">
                 <div className="text-center space-y-2">

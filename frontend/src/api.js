@@ -30,7 +30,7 @@ async function request(method, path, body = null) {
   const res = await fetch(`${BASE}${path}`, opts);
   if (res.status === 401) {
     setToken(null);
-    window.location.hash = "#/login";
+    window.dispatchEvent(new CustomEvent('auth:logout'));
     throw new Error("Session expired");
   }
   if (!res.ok) {
@@ -127,7 +127,7 @@ export const folders = {
 
 // ── AI ───────────────────────────────────────────────────────────────────────
 export const ai = {
-  ask: (prompt) => request("POST", "/ai/ask", { prompt }),
+  ask: (prompt, history = []) => request("POST", "/ai/ask", { prompt, history }),
   summarize: (text) => request("POST", "/ai/summarize", { text }),
   suggestTags: (text) => request("POST", "/ai/suggest-tags", { text }),
 };

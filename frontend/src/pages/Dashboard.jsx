@@ -1,53 +1,43 @@
-import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import SectionHeader from '@/components/SectionHeader';
 import Card from '@/components/Card';
 import Button from '@/components/Button';
+import { SkeletonLine, SkeletonStatCard } from '@/components/Skeleton';
 import { dashboard } from '@/api';
 
 export default function Dashboard({ user }) {
   const navigate = useNavigate();
-  const [stats, setStats] = useState(null);
-  const [recent, setRecent] = useState([]);
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [statsData, recentData] = await Promise.all([
-          dashboard.stats(),
-          dashboard.recent(),
-        ]);
-        setStats(statsData);
-        setRecent(recentData);
-      } catch (err) {
-        console.error('Failed to load dashboard:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
+  const { data: stats, isLoading: statsLoading } = useQuery({
+    queryKey: ['dashboard-stats'],
+    queryFn: dashboard.stats,
+    onError: () => toast.error('Failed to load stats'),
+  });
 
-    fetchData();
-  }, []);
+  const { data: recent = [], isLoading: recentLoading } = useQuery({
+    queryKey: ['dashboard-recent'],
+    queryFn: dashboard.recent,
+    onError: () => toast.error('Failed to load recent notes'),
+  });
+
+  const loading = statsLoading || recentLoading;
 
   const StatCard = ({ icon, label, value, color }) => (
-    <Card
-      accent={color}
-      className="p-6 flex flex-col justify-between h-full"
-    >
+    <Card accent={color} className="p-6 flex flex-col justify-between h-full">
       <div>
         <div className="text-4xl mb-3">{icon}</div>
         <p className="text-txt-secondary text-sm font-medium">{label}</p>
       </div>
       <div className="text-3xl font-bold text-txt">
-        {loading ? '—' : value}
+        {statsLoading ? '—' : value}
       </div>
     </Card>
   );
 
   return (
     <div className="p-10 space-y-10">
-      {/* Header */}
       <SectionHeader
         title="Dashboard"
         subtitle={`Welcome back, ${user?.username || 'Adventurer'} — here's your campaign at a glance.`}
@@ -55,42 +45,18 @@ export default function Dashboard({ user }) {
 
       {/* Stats Row */}
       <div className="grid grid-cols-3 lg:grid-cols-6 gap-4">
-        <StatCard
-          icon="📝"
-          label="Notes"
-          value={stats?.notes || 0}
-          color="#8b5cf6"
-        />
-        <StatCard
-          icon="📁"
-          label="Folders"
-          value={stats?.folders || 0}
-          color="#10b981"
-        />
-        <StatCard
-          icon="👤"
-          label="Characters"
-          value={stats?.characters || 0}
-          color="#f59e0b"
-        />
-        <StatCard
-          icon="⚔️"
-          label="Quests"
-          value={stats?.quests || 0}
-          color="#ef4444"
-        />
-        <StatCard
-          icon="🌌"
-          label="Timeline"
-          value={stats?.timeline_events || 0}
-          color="#60a5fa"
-        />
-        <StatCard
-          icon="🎲"
-          label="Sessions"
-          value={stats?.sessions || 0}
-          color="#a78bfa"
-        />
+        {statsLoading ? (
+          Array.from({ length: 6 }).map((_, i) => <SkeletonStatCard key={i} />)
+        ) : (
+          <>
+            <StatCard icon="📝" label="Notes" value={stats?.notes || 0} color="#8b5cf6" />
+            <StatCard icon="📁" label="Folders" value={stats?.folders || 0} color="#10b981" />
+            <StatCard icon="👤" label="Characters" value={stats?.characters || 0} color="#f59e0b" />
+            <StatCard icon="⚔️" label="Quests" value={stats?.quests || 0} color="#ef4444" />
+            <StatCard icon="🌌" label="Timeline" value={stats?.timeline_events || 0} color="#60a5fa" />
+            <StatCard icon="🎲" label="Sessions" value={stats?.sessions || 0} color="#a78bfa" />
+          </>
+        )}
       </div>
 
       {/* Bottom Row */}
@@ -100,8 +66,12 @@ export default function Dashboard({ user }) {
           <Card className="p-6 h-full">
             <h3 className="text-lg font-bold text-txt mb-4">Recent Notes</h3>
             <div className="space-y-1">
-              {loading ? (
-                <p className="text-txt-muted text-sm">Loading...</p>
+              {recentLoading ? (
+                <div className="space-y-2">
+                  <SkeletonLine />
+                  <SkeletonLine width="w-5/6" />
+                  <SkeletonLine width="w-4/6" />
+                </div>
               ) : recent.length > 0 ? (
                 recent.map((note) => (
                   <div
@@ -120,7 +90,13 @@ export default function Dashboard({ user }) {
                   </div>
                 ))
               ) : (
-                <p className="text-txt-muted text-sm">No notes yet</p>
+                <div className="flex flex-col items-center justify-center py-8 text-center space-y-2">
+                  <div className="text-3xl">📝</div>
+                  <p className="text-txt-muted text-sm">No notes yet</p>
+                  <Button variant="secondary" size="sm" onClick={() => navigate('/create')}>
+                    Create your first note
+                  </Button>
+                </div>
               )}
             </div>
           </Card>

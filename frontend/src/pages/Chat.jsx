@@ -1,19 +1,25 @@
 import { useState, useRef, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
 import SectionHeader from '@/components/SectionHeader';
 import Card from '@/components/Card';
 import Button from '@/components/Button';
 import { TextArea } from '@/components/Input';
 import { ai, notes } from '@/api';
 
+const BASE_URL =
+  typeof window !== 'undefined' && window.electronAPI
+    ? 'http://127.0.0.1:8741'
+    : '/api';
+
 export default function Chat() {
   const [messages, setMessages] = useState([]);
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(false);
+  const [streamingMode, setStreamingMode] = useState(false);
   const [sessionTokens, setSessionTokens] = useState(0);
   const [saveStatus, setSaveStatus] = useState('');
   const chatEndRef = useRef(null);
 
-  // Auto-scroll to bottom when messages change
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
@@ -24,12 +30,21 @@ export default function Chat() {
     if (!prompt.trim() || loading) return;
 
     const userMessage = { id: nextId(), role: 'user', content: prompt };
+    const history = messages.slice(-10).map((m) => ({ role: m.role, content: m.content }));
     setMessages((prev) => [...prev, userMessage]);
     setPrompt('');
     setLoading(true);
 
+    if (streamingMode) {
+      await handleStreamingAsk(prompt, history);
+    } else {
+      await handleRegularAsk(prompt, history);
+    }
+  };
+
+  const handleRegularAsk = async (userPrompt, history) => {
     try {
-      const response = await ai.ask(prompt);
+      const response = await ai.ask(userPrompt, history);
       const msgTokens = (response.prompt_tokens || 0) + (response.completion_tokens || 0);
       setSessionTokens((prev) => prev + msgTokens);
       setMessages((prev) => [
@@ -46,6 +61,63 @@ export default function Chat() {
         ...prev,
         { id: nextId(), role: 'error', content: `Error: ${err.message}` },
       ]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleStreamingAsk = async (userPrompt, history) => {
+    const assistantId = nextId();
+    setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '' }]);
+
+    try {
+      const { getToken } = await import('@/api');
+      const token = getToken();
+      const res = await fetch(`${BASE_URL}/ai/ask/stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ prompt: userPrompt, history }),
+      });
+
+      if (!res.ok) throw new Error(`Stream error: ${res.status}`);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6);
+          if (data === '[DONE]') break;
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.error) throw new Error(parsed.error);
+            if (parsed.token) {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId ? { ...m, content: m.content + parsed.token } : m
+                )
+              );
+            }
+          } catch {
+            // ignore parse errors on individual chunks
+          }
+        }
+      }
+    } catch (err) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId ? { ...m, role: 'error', content: `Error: ${err.message}` } : m
+        )
+      );
     } finally {
       setLoading(false);
     }
@@ -89,7 +161,16 @@ export default function Chat() {
           title="✦ AI Assistant"
           subtitle="Ask anything about your world, lore, or notes."
         />
-        <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <label className="flex items-center gap-2 text-sm text-txt-muted cursor-pointer">
+            <input
+              type="checkbox"
+              checked={streamingMode}
+              onChange={(e) => setStreamingMode(e.target.checked)}
+              className="w-4 h-4 rounded bg-elevated border-2 border-txt-muted accent-accent"
+            />
+            Streaming
+          </label>
           {saveStatus && (
             <span className="text-accent text-xs font-medium bg-accent/10 px-3 py-1.5 rounded-lg">
               {saveStatus}
@@ -112,9 +193,8 @@ export default function Chat() {
           <div className="h-full flex items-center justify-center">
             <div className="text-center">
               <div className="text-5xl mb-4">✦</div>
-              <p className="text-txt-secondary">
-                No messages yet. Ask something to get started.
-              </p>
+              <p className="text-txt-secondary text-lg font-medium">Ask anything about your campaign</p>
+              <p className="text-txt-muted text-sm mt-1">Lore, NPCs, quests, rules — your AI guide awaits.</p>
             </div>
           </div>
         ) : (
@@ -125,7 +205,7 @@ export default function Chat() {
             >
               <div>
                 <div
-                  className={`max-w-xs lg:max-w-md px-4 py-4 rounded-xl ${
+                  className={`max-w-xs lg:max-w-2xl px-4 py-4 rounded-xl ${
                     msg.role === 'user'
                       ? 'bg-accent/10 text-txt'
                       : msg.role === 'error'
@@ -133,7 +213,13 @@ export default function Chat() {
                         : 'bg-card text-txt'
                   }`}
                 >
-                  <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                  {msg.role === 'assistant' ? (
+                    <ReactMarkdown className="prose prose-sm prose-invert max-w-none text-txt">
+                      {msg.content || '…'}
+                    </ReactMarkdown>
+                  ) : (
+                    <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                  )}
                 </div>
                 {msg.role === 'assistant' && msg.tokens > 0 && (
                   <p className="text-[10px] text-txt-muted mt-0.5 px-1">
@@ -144,7 +230,7 @@ export default function Chat() {
             </div>
           ))
         )}
-        {loading && (
+        {loading && !streamingMode && (
           <div className="flex justify-start">
             <Card className="px-4 py-4 max-w-xs lg:max-w-md">
               <div className="flex items-center gap-2">
@@ -172,6 +258,7 @@ export default function Chat() {
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={handleKeyDown}
           disabled={loading}
+          title="Ctrl+Enter to send"
         />
         <div className="flex gap-3">
           <Button
@@ -179,6 +266,7 @@ export default function Chat() {
             onClick={handleAsk}
             disabled={loading || !prompt.trim()}
             className="flex-1"
+            title="Ctrl+Enter to send"
           >
             {loading ? 'Thinking...' : '✦ Ask AI'}
           </Button>

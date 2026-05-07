@@ -1,19 +1,23 @@
 """
-AI routes for MythosEngine FastAPI server.
+AI endpoints.
 
-Endpoints
----------
 GET  /ai/status       — readiness check (always available, no auth required)
-POST /ai/ask          — ask a question about vault lore
-POST /ai/summarize    — summarize a block of text
-POST /ai/suggest-tags — suggest tags for a note
+POST /ai/ask          — ask the AI a question with vault context
+POST /ai/ask/stream   — streaming SSE version of ask
+POST /ai/summarize    — summarize text
+POST /ai/suggest-tags — suggest tags for text
 """
 
+import json
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
+
 from server.deps import get_ctx, get_current_user
 from server.limiter import limiter
 
@@ -21,21 +25,32 @@ from server.limiter import limiter
 router = APIRouter(prefix="/ai", tags=["ai"])
 
 
+# ============================================================================
+# Request/Response models
+# ============================================================================
+
+
 class AskRequest(BaseModel):
+    """Request body for POST /ai/ask"""
     prompt: str
+    vault_id: Optional[str] = None
+    history: Optional[list[dict]] = None
 
 
 class AskResponse(BaseModel):
+    """Response body for POST /ai/ask"""
     response: str
     prompt_tokens: int
     completion_tokens: int
 
 
 class SummarizeRequest(BaseModel):
+    """Request body for POST /ai/summarize"""
     text: str
 
 
 class SummarizeResponse(BaseModel):
+    """Response body for POST /ai/summarize"""
     summary: str
     prompt_tokens: int
     completion_tokens: int
@@ -54,6 +69,11 @@ class SuggestTagsResponse(BaseModel):
     completion_tokens: int
 
 
+# ============================================================================
+# Helpers
+# ============================================================================
+
+
 def require_index_ready(ctx: AppContext = Depends(get_ctx)) -> None:
     """Raise 503 if the AI vector index is still being built."""
     if not getattr(ctx.ai, "_index_ready", False):
@@ -61,6 +81,23 @@ def require_index_ready(ctx: AppContext = Depends(get_ctx)) -> None:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="AI index is still building. Try again shortly.",
         )
+
+
+def _build_prompt_with_history(prompt: str, history: Optional[list[dict]]) -> str:
+    """Prepend conversation history to the prompt if provided."""
+    if not history:
+        return prompt
+    lines = []
+    for msg in history:
+        role = "User" if msg.get("role") == "user" else "Assistant"
+        content = msg.get("content", "")
+        lines.append(f"{role}: {content}")
+    return "Previous conversation:\n" + "\n".join(lines) + f"\n\nUser: {prompt}"
+
+
+# ============================================================================
+# AI endpoints
+# ============================================================================
 
 
 @router.get("/status")
@@ -75,66 +112,146 @@ async def ai_status(ctx: AppContext = Depends(get_ctx)):
 @limiter.limit("20/minute")
 async def ask(
     request: Request,
-    body: AskRequest,
+    req: AskRequest,
     ctx: AppContext = Depends(get_ctx),
-    _user: User = Depends(get_current_user),
-    _: None = Depends(require_index_ready),
+    user: User = Depends(get_current_user),
 ):
-    if not ctx.has_ai():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI engine is not configured. Set OPENAI_API_KEY in .env.",
+    """
+    Ask the AI a question, optionally with vault context and conversation history.
+
+    Requires authentication and an AI engine (optional).
+    """
+    try:
+        if not ctx.has_ai():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="AI engine not available",
+            )
+
+        ai = ctx.require_ai()
+        full_prompt = _build_prompt_with_history(req.prompt, req.history)
+        response, prompt_tokens, completion_tokens = ai.ask(full_prompt)
+
+        return AskResponse(
+            response=response,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
         )
-    answer, prompt_tokens, completion_tokens = ctx.ai.ask(body.prompt)
-    return {
-        "response": answer,
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-    }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"AI request failed: {str(e)}",
+        )
+
+
+@router.post("/ask/stream")
+async def stream_ask(
+    req: AskRequest,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """
+    Streaming SSE version of /ai/ask. Yields tokens word-by-word as data events.
+    """
+    async def generate():
+        try:
+            if not ctx.has_ai():
+                yield f"data: {json.dumps({'error': 'AI engine not available'})}\n\n"
+                return
+
+            ai = ctx.require_ai()
+            full_prompt = _build_prompt_with_history(req.prompt, req.history)
+            response, _, _ = ai.ask(full_prompt)
+
+            words = response.split(" ")
+            for i, word in enumerate(words):
+                token = word + (" " if i < len(words) - 1 else "")
+                yield f"data: {json.dumps({'token': token})}\n\n"
+
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 @router.post("/summarize", response_model=SummarizeResponse)
 @limiter.limit("20/minute")
 async def summarize(
     request: Request,
-    body: SummarizeRequest,
+    req: SummarizeRequest,
     ctx: AppContext = Depends(get_ctx),
-    _user: User = Depends(get_current_user),
-    _: None = Depends(require_index_ready),
+    user: User = Depends(get_current_user),
 ):
-    if not ctx.has_ai():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI engine is not configured. Set OPENAI_API_KEY in .env.",
+    """
+    Summarize the provided text using the AI engine.
+
+    Requires authentication and an AI engine (optional).
+    """
+    try:
+        if not ctx.has_ai():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="AI engine not available",
+            )
+
+        ai = ctx.require_ai()
+        summary, prompt_tokens, completion_tokens = ai.summarize(req.text)
+
+        return SummarizeResponse(
+            summary=summary,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
         )
-    summary, prompt_tokens, completion_tokens = ctx.ai.summarize(body.text)
-    return {
-        "summary": summary,
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-    }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Summarization failed: {str(e)}",
+        )
 
 
 @router.post("/suggest-tags", response_model=SuggestTagsResponse)
 @limiter.limit("20/minute")
 async def suggest_tags(
     request: Request,
-    body: SuggestTagsRequest,
+    req: SuggestTagsRequest,
     ctx: AppContext = Depends(get_ctx),
-    _user: User = Depends(get_current_user),
-    _: None = Depends(require_index_ready),
+    user: User = Depends(get_current_user),
 ):
-    if not ctx.has_ai():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI engine is not configured. Set OPENAI_API_KEY in .env.",
+    """
+    Suggest tags for text using the AI engine.
+
+    Optionally pass existing_tags to avoid duplicates and maintain consistency.
+
+    Requires authentication and an AI engine (optional).
+    """
+    try:
+        if not ctx.has_ai():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="AI engine not available",
+            )
+
+        ai = ctx.require_ai()
+        tags, prompt_tokens, completion_tokens = ai.suggest_tags(req.text)
+
+        if req.existing_tags:
+            existing_lower = {tag.lower() for tag in req.existing_tags}
+            tags = [tag for tag in tags if tag.lower() not in existing_lower]
+
+        return SuggestTagsResponse(
+            tags=tags,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
         )
-    tags, prompt_tokens, completion_tokens = ctx.ai.suggest_tags(body.text)
-    if body.existing_tags:
-        existing_lower = {tag.lower() for tag in body.existing_tags}
-        tags = [tag for tag in tags if tag.lower() not in existing_lower]
-    return {
-        "tags": tags,
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-    }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Tag suggestion failed: {str(e)}",
+        )

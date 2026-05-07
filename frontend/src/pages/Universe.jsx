@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import SectionHeader from '@/components/SectionHeader';
 import Card from '@/components/Card';
 import Button from '@/components/Button';
@@ -24,13 +25,6 @@ export default function Universe() {
   const [formCategory, setFormCategory] = useState('event');
   const [editingId, setEditingId] = useState(null);
 
-  const [statusMsg, setStatusMsg] = useState('');
-
-  const flash = (msg) => {
-    setStatusMsg(msg);
-    setTimeout(() => setStatusMsg(''), 3000);
-  };
-
   // ── Load timeline events ─────────────────────────────────────────────
   const loadEvents = async () => {
     try {
@@ -38,15 +32,18 @@ export default function Universe() {
       const mapped = allNotes.map((n) => ({
         id: n.id,
         title: n.title,
-        date: n.tags?.find((t) => t.startsWith('date:'))?.slice(5) || '',
-        category: n.tags?.find((t) => t.startsWith('cat:'))?.slice(4) || 'event',
-        description: '', // loaded on select
+        // Prefer meta fields; fall back to legacy tag encoding for existing data
+        date: n.meta?.event_date || n.tags?.find((t) => t.startsWith('date:'))?.slice(5) || '',
+        category: n.meta?.category || n.tags?.find((t) => t.startsWith('cat:'))?.slice(4) || 'event',
+        description: '',
         tags: n.tags || [],
+        meta: n.meta || {},
         last_modified: n.last_modified,
       }));
       setEvents(mapped);
     } catch (err) {
       console.error('Failed to load timeline:', err);
+      toast.error('Failed to load timeline');
     } finally {
       setLoading(false);
     }
@@ -63,6 +60,8 @@ export default function Universe() {
         ...evt,
         description: detail.content || '',
         meta: detail.meta || {},
+        date: detail.meta?.event_date || evt.date,
+        category: detail.meta?.category || evt.category,
       });
     } catch (err) {
       console.error('Failed to load event:', err);
@@ -89,7 +88,6 @@ export default function Universe() {
     setFormTitle(evt.title);
     setFormDate(evt.date || '');
     setFormCategory(evt.category || 'event');
-    // Load full description
     notes.get(evt.id).then((detail) => {
       setFormDescription(detail.content || '');
     });
@@ -100,28 +98,28 @@ export default function Universe() {
   const handleSave = async () => {
     if (!formTitle.trim()) return;
 
-    const tags = [
-      TIMELINE_TAG,
-      `date:${formDate || 'Unknown'}`,
-      `cat:${formCategory}`,
-    ];
+    const meta = {
+      event_date: formDate || 'Unknown',
+      category: formCategory,
+    };
 
     try {
       if (editingId) {
         await notes.update(editingId, {
           title: formTitle,
           content: formDescription,
-          tags,
+          tags: [TIMELINE_TAG],
+          meta,
         });
-        flash('Event updated');
+        toast.success('Event updated');
       } else {
-        await notes.create(formTitle, formDescription, null, tags);
-        flash('Event created');
+        await notes.create(formTitle, formDescription, null, [TIMELINE_TAG], meta);
+        toast.success('Event created');
       }
       resetForm();
       await loadEvents();
     } catch (err) {
-      flash('Failed to save: ' + err.message);
+      toast.error('Failed to save: ' + err.message);
     }
   };
 
@@ -131,14 +129,14 @@ export default function Universe() {
     try {
       await notes.delete(eventId);
       if (selectedEvent?.id === eventId) setSelectedEvent(null);
-      flash('Event deleted');
+      toast.success('Event deleted');
       await loadEvents();
     } catch (err) {
-      flash('Failed to delete: ' + err.message);
+      toast.error('Failed to delete: ' + err.message);
     }
   };
 
-  // ── Sort events by date tag ──────────────────────────────────────────
+  // ── Sort events by date field ────────────────────────────────────────
   const sortedEvents = [...events].sort((a, b) =>
     (a.date || '').localeCompare(b.date || '')
   );
@@ -164,16 +162,7 @@ export default function Universe() {
           title="🌌 Universe Timeline"
           subtitle="Track events, story arcs, and history across your world."
         />
-        <div className="flex gap-2 items-center">
-          {statusMsg && (
-            <span className="text-accent text-xs font-medium bg-accent/10 px-3 py-1.5 rounded-lg">
-              {statusMsg}
-            </span>
-          )}
-          <Button variant="primary" onClick={handleAddEvent}>
-            + Add Event
-          </Button>
-        </div>
+        <Button variant="primary" onClick={handleAddEvent}>+ Add Event</Button>
       </div>
 
       {/* Add/Edit Form */}
@@ -282,16 +271,10 @@ export default function Universe() {
 
                     {/* Actions on hover */}
                     <div className="flex gap-2 mt-2 opacity-0 group-hover:opacity-100 transition">
-                      <Button variant="ghost" size="sm" onClick={(e) => {
-                        e.stopPropagation();
-                        handleEditEvent(event);
-                      }}>
+                      <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); handleEditEvent(event); }}>
                         Edit
                       </Button>
-                      <Button variant="danger" size="sm" onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteEvent(event.id);
-                      }}>
+                      <Button variant="danger" size="sm" onClick={(e) => { e.stopPropagation(); handleDeleteEvent(event.id); }}>
                         Delete
                       </Button>
                     </div>
@@ -323,16 +306,18 @@ export default function Universe() {
               </p>
             </div>
 
-            {selectedEvent.meta && Object.keys(selectedEvent.meta).length > 0 && (
+            {selectedEvent.meta && Object.keys(selectedEvent.meta).filter(k => k !== 'event_date' && k !== 'category').length > 0 && (
               <div className="border-t border-txt-muted/10 pt-3">
                 <p className="text-xs font-bold text-txt-muted uppercase tracking-wider mb-2">Metadata</p>
                 <div className="space-y-1">
-                  {Object.entries(selectedEvent.meta).map(([k, v]) => (
-                    <div key={k} className="flex justify-between text-xs">
-                      <span className="text-txt-muted">{k}</span>
-                      <span className="text-txt">{v}</span>
-                    </div>
-                  ))}
+                  {Object.entries(selectedEvent.meta)
+                    .filter(([k]) => k !== 'event_date' && k !== 'category')
+                    .map(([k, v]) => (
+                      <div key={k} className="flex justify-between text-xs">
+                        <span className="text-txt-muted">{k}</span>
+                        <span className="text-txt">{v}</span>
+                      </div>
+                    ))}
                 </div>
               </div>
             )}

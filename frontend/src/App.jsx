@@ -23,6 +23,16 @@ export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  // Listen for 401 auth:logout events dispatched by api.js
+  useEffect(() => {
+    const handler = () => {
+      setUser(null);
+      navigate('/login');
+    };
+    window.addEventListener('auth:logout', handler);
+    return () => window.removeEventListener('auth:logout', handler);
+  }, [navigate]);
+
   // Try to restore session on mount, and check if first-run setup is needed
   useEffect(() => {
     const init = async () => {
