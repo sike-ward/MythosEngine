@@ -55,6 +55,22 @@ class ModelRouter(AIInterface):
         plugin_cls = get_plugin(name)
         return plugin_cls(config=self._config)
 
+    def _record_cost(self, operation: str, prompt_tokens: int, completion_tokens: int) -> None:
+        """Record token usage against the shared CostTracker, if one is available."""
+        ct = getattr(self._storage, "cost_tracker", None)
+        if ct is None:
+            return
+        model = getattr(self._backends.get(operation), "model", "unknown")
+        user_id = getattr(self._storage, "_current_user_id", "") or ""
+        ct.record(
+            user_id=user_id,
+            vault_id="",
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            operation=operation,
+        )
+
     def _assembler(self, model_name: str) -> ContextAssembler:
         """Return a ContextAssembler using the shared storage and index manager."""
         max_context_tokens = getattr(self._config, "MAX_CONTEXT_TOKENS", 4096)
@@ -89,7 +105,10 @@ class ModelRouter(AIInterface):
             prompt=full_prompt,
         )
 
-        return self._backends["ask"].ask(full_prompt)
+        result = self._backends["ask"].ask(full_prompt)
+        _, p_tok, c_tok = result
+        self._record_cost("ask", p_tok, c_tok)
+        return result
 
     def summarize(self, text: str) -> Tuple[str, int, int]:
         model_name = getattr(self._backends["summarize"], "model", "gpt-3.5-turbo")
@@ -102,7 +121,10 @@ class ModelRouter(AIInterface):
             user_prompt=f"Summarize the following note:\n\n{text}",
             min_tokens_for_reply=256,
         )
-        return self._backends["summarize"].summarize(ctx_result["context_block"])
+        result = self._backends["summarize"].summarize(ctx_result["context_block"])
+        _, p_tok, c_tok = result
+        self._record_cost("summarize", p_tok, c_tok)
+        return result
 
     def suggest_tags(self, text: str) -> Tuple[str, int, int]:
         model_name = getattr(self._backends["suggest_tags"], "model", "gpt-3.5-turbo")
@@ -115,7 +137,10 @@ class ModelRouter(AIInterface):
             user_prompt=f"Suggest tags for this note:\n\n{text}",
             min_tokens_for_reply=128,
         )
-        return self._backends["suggest_tags"].suggest_tags(ctx_result["context_block"])
+        result = self._backends["suggest_tags"].suggest_tags(ctx_result["context_block"])
+        _, p_tok, c_tok = result
+        self._record_cost("suggest_tags", p_tok, c_tok)
+        return result
 
     def propose_links(self, text: str, note_names: List[str]) -> Tuple[str, int, int]:
         model_name = getattr(self._backends["propose_links"], "model", "gpt-3.5-turbo")
@@ -131,7 +156,10 @@ class ModelRouter(AIInterface):
             ),
             min_tokens_for_reply=256,
         )
-        return self._backends["propose_links"].propose_links(ctx_result["context_block"], note_names)
+        result = self._backends["propose_links"].propose_links(ctx_result["context_block"], note_names)
+        _, p_tok, c_tok = result
+        self._record_cost("propose_links", p_tok, c_tok)
+        return result
 
     def search_context(self, query: str, top_k: int = 10) -> List[str]:
         return self._backends["search_context"].search_context(query, top_k)
