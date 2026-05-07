@@ -3,7 +3,10 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import Button from '@/components/Button';
 import Badge from '@/components/Badge';
-import { users, invites } from '@/api';
+import { users, invites, dashboard } from '@/api';
+
+const ROLE_ADMIN = 'admin';
+const ROLE_PLAYER = 'player';
 
 export default function AdminSettings() {
   const queryClient = useQueryClient();
@@ -18,6 +21,11 @@ export default function AdminSettings() {
   const { data: invitesList = [], isLoading: invitesLoading } = useQuery({
     queryKey: ['invites'],
     queryFn: invites.list,
+  });
+
+  const { data: dashboardStats = {}, isLoading: statsLoading } = useQuery({
+    queryKey: ['dashboard-stats'],
+    queryFn: dashboard.stats,
   });
 
   const generateInviteMutation = useMutation({
@@ -66,6 +74,15 @@ export default function AdminSettings() {
     onError: () => toast.error('Failed to reset password'),
   });
 
+  const updateRoleMutation = useMutation({
+    mutationFn: ({ id, roles }) => users.updateRole(id, roles),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      toast.success('Role updated');
+    },
+    onError: () => toast.error('Failed to update role'),
+  });
+
   const handleCopyInvite = (code) => {
     navigator.clipboard.writeText(code)
       .then(() => toast.success('Copied to clipboard!'))
@@ -78,13 +95,68 @@ export default function AdminSettings() {
     resetPasswordMutation.mutate({ id: resetUserId, password: resetNewPassword });
   };
 
-  const getUserRole = (u) => {
-    if (u.roles && Array.isArray(u.roles)) return u.roles[0] || 'player';
-    return u.role || 'player';
+  const normalizeRoles = (u) => {
+    if (Array.isArray(u.roles)) {
+      const roles = u.roles.filter(Boolean);
+      return roles.length ? roles : [ROLE_PLAYER];
+    }
+    if (typeof u.role === 'string' && u.role.trim()) return [u.role];
+    return [ROLE_PLAYER];
+  };
+
+  const getUserRole = (u) => normalizeRoles(u)[0] || ROLE_PLAYER;
+
+  const hasAdminRole = (u) => normalizeRoles(u).includes(ROLE_ADMIN);
+  const isInviteActive = (inv) => inv.is_active && (!inv.expires_at || new Date(inv.expires_at) > new Date());
+
+  const adminCount = usersList.filter((u) => hasAdminRole(u)).length;
+  const activeUserCount = usersList.filter((u) => u.is_active !== false).length;
+  const activeInvites = invitesList.filter(isInviteActive).length;
+
+  const handleRoleToggle = (u) => {
+    const currentRoles = normalizeRoles(u);
+    const nextRoles = hasAdminRole(u)
+      ? currentRoles.filter((r) => r !== ROLE_ADMIN)
+      : [...currentRoles, ROLE_ADMIN];
+    if (nextRoles.length === 0) nextRoles.push(ROLE_PLAYER);
+    updateRoleMutation.mutate({ id: u.id, roles: nextRoles });
   };
 
   return (
     <div className="space-y-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <div className="bg-elevated rounded-xl p-3">
+          <p className="text-xs text-txt-muted uppercase">Users</p>
+          <p className="text-xl font-bold text-txt">{usersLoading ? '...' : usersList.length}</p>
+          <p className="text-xs text-txt-muted">{usersLoading ? 'Loading…' : `${activeUserCount} active`}</p>
+        </div>
+        <div className="bg-elevated rounded-xl p-3">
+          <p className="text-xs text-txt-muted uppercase">Admins</p>
+          <p className="text-xl font-bold text-txt">{usersLoading ? '...' : adminCount}</p>
+          <p className="text-xs text-txt-muted">Accounts with admin role</p>
+        </div>
+        <div className="bg-elevated rounded-xl p-3">
+          <p className="text-xs text-txt-muted uppercase">Invite Codes</p>
+          <p className="text-xl font-bold text-txt">{invitesLoading ? '...' : activeInvites}</p>
+          <p className="text-xs text-txt-muted">Active and unexpired</p>
+        </div>
+        <div className="bg-elevated rounded-xl p-3">
+          <p className="text-xs text-txt-muted uppercase">Notes</p>
+          <p className="text-xl font-bold text-txt">{statsLoading ? '...' : (dashboardStats.notes ?? 0)}</p>
+          <p className="text-xs text-txt-muted">Worldbuilding entries</p>
+        </div>
+        <div className="bg-elevated rounded-xl p-3">
+          <p className="text-xs text-txt-muted uppercase">Characters</p>
+          <p className="text-xl font-bold text-txt">{statsLoading ? '...' : (dashboardStats.characters ?? 0)}</p>
+          <p className="text-xs text-txt-muted">Character records</p>
+        </div>
+        <div className="bg-elevated rounded-xl p-3">
+          <p className="text-xs text-txt-muted uppercase">Sessions</p>
+          <p className="text-xl font-bold text-txt">{statsLoading ? '...' : (dashboardStats.sessions ?? 0)}</p>
+          <p className="text-xs text-txt-muted">Campaign session logs</p>
+        </div>
+      </div>
+
       {/* Invite Codes */}
       <div>
         <div className="flex items-center justify-between mb-4">
@@ -104,7 +176,7 @@ export default function AdminSettings() {
         ) : (
           <div className="space-y-2">
             {invitesList.map((inv) => {
-              const isActive = inv.is_active && (!inv.expires_at || new Date(inv.expires_at) > new Date());
+              const isActive = isInviteActive(inv);
               const isUsed = inv.used_by || (inv.use_count > 0 && inv.use_count >= (inv.max_uses || 1));
               const statusLabel = isUsed ? 'used' : isActive ? 'active' : 'expired';
               const statusVariant = isUsed ? 'disabled' : isActive ? 'active' : 'expired';
@@ -171,7 +243,7 @@ export default function AdminSettings() {
                     <td className="py-3 px-4 text-txt font-medium">{u.username}</td>
                     <td className="py-3 px-4 text-txt-secondary">{u.email}</td>
                     <td className="py-3 px-4">
-                      <Badge label={getUserRole(u)} variant={getUserRole(u) === 'admin' ? 'admin' : 'player'} />
+                      <Badge label={getUserRole(u)} variant={getUserRole(u) === ROLE_ADMIN ? 'admin' : 'player'} />
                     </td>
                     <td className="py-3 px-4">
                       <Badge
@@ -180,6 +252,14 @@ export default function AdminSettings() {
                       />
                     </td>
                     <td className="py-3 px-4 space-x-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={updateRoleMutation.isPending}
+                        onClick={() => handleRoleToggle(u)}
+                      >
+                        {getUserRole(u) === ROLE_ADMIN ? 'Make Player' : 'Make Admin'}
+                      </Button>
                       <Button variant="secondary" size="sm" onClick={() => { setResetUserId(u.id); setResetNewPassword(''); }}>
                         Reset PW
                       </Button>
