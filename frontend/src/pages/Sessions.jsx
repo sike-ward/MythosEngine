@@ -1,0 +1,324 @@
+import { useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import ReactMarkdown from 'react-markdown';
+import { toast } from 'sonner';
+import SectionHeader from '@/components/SectionHeader';
+import Button from '@/components/Button';
+import Input, { TextArea } from '@/components/Input';
+import { sessions } from '@/api';
+
+// ─── SessionDetail ────────────────────────────────────────────────────────────
+
+function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted }) {
+  const queryClient = useQueryClient();
+
+  const [title, setTitle] = useState('');
+  const [sessionDate, setSessionDate] = useState('');
+  const [participants, setParticipants] = useState('');
+  const [xpGained, setXpGained] = useState(0);
+  const [lootNotes, setLootNotes] = useState('');
+  const [rawNotes, setRawNotes] = useState('');
+  const [aiRecap, setAiRecap] = useState('');
+  const [recapLoading, setRecapLoading] = useState(false);
+
+  const { data: detail } = useQuery({
+    queryKey: ['session', sessionId],
+    queryFn: () => sessions.get(sessionId),
+    enabled: !!sessionId && !isNew,
+  });
+
+  useEffect(() => {
+    if (isNew) {
+      setTitle('');
+      setSessionDate('');
+      setParticipants('');
+      setXpGained(0);
+      setLootNotes('');
+      setRawNotes('');
+      setAiRecap('');
+    } else if (detail) {
+      setTitle(detail.title || '');
+      setSessionDate(detail.session_date || '');
+      setParticipants(detail.participants || '');
+      setXpGained(detail.xp_gained ?? 0);
+      setLootNotes(detail.loot_notes || '');
+      setRawNotes(detail.raw_notes || '');
+      setAiRecap(detail.ai_recap || '');
+    }
+  }, [detail, isNew]);
+
+  const saveMutation = useMutation({
+    mutationFn: (data) =>
+      isNew
+        ? sessions.create(data)
+        : sessions.update(sessionId, data),
+    onSuccess: (saved) => {
+      toast.success(isNew ? 'Session created' : 'Session saved');
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      queryClient.invalidateQueries({ queryKey: ['session', saved.id] });
+      onSaved(saved.id);
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => sessions.delete(sessionId),
+    onSuccess: () => {
+      toast.success('Session deleted');
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      onDeleted();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const handleSave = () => {
+    if (!title.trim()) {
+      toast.error('Title is required');
+      return;
+    }
+    saveMutation.mutate({
+      vault_id: vaultId,
+      title: title.trim(),
+      session_date: sessionDate,
+      participants,
+      xp_gained: Number(xpGained) || 0,
+      loot_notes: lootNotes,
+      raw_notes: rawNotes,
+    });
+  };
+
+  const handleGenerateRecap = async () => {
+    if (!rawNotes.trim()) {
+      toast.error('Add some raw notes before generating a recap');
+      return;
+    }
+    setRecapLoading(true);
+    try {
+      const result = await sessions.generateRecap(sessionId);
+      setAiRecap(result.ai_recap);
+      queryClient.invalidateQueries({ queryKey: ['session', sessionId] });
+      toast.success('Recap generated!');
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setRecapLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex-1 overflow-y-auto p-6 space-y-5">
+      <div className="grid grid-cols-2 gap-4">
+        <Input
+          label="Title"
+          placeholder="Session 1 — The Beginning"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+        />
+        <Input
+          label="Session Date"
+          type="date"
+          value={sessionDate}
+          onChange={(e) => setSessionDate(e.target.value)}
+        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <Input
+          label="Participants (comma-separated)"
+          placeholder="Aria, Brom, Cael"
+          value={participants}
+          onChange={(e) => setParticipants(e.target.value)}
+        />
+        <Input
+          label="XP Gained"
+          type="number"
+          min="0"
+          value={xpGained}
+          onChange={(e) => setXpGained(e.target.value)}
+        />
+      </div>
+
+      <TextArea
+        label="Loot Notes"
+        placeholder="Gold, magic items, key items found this session..."
+        value={lootNotes}
+        onChange={(e) => setLootNotes(e.target.value)}
+        rows={3}
+      />
+
+      <TextArea
+        label="Raw Notes (DM's session notes)"
+        placeholder="Write your raw session notes here. These will be used to generate the AI recap."
+        value={rawNotes}
+        onChange={(e) => setRawNotes(e.target.value)}
+        rows={8}
+      />
+
+      {/* AI Recap section */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <label className="text-txt-muted text-sm font-medium">AI Recap</label>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleGenerateRecap}
+            disabled={isNew || recapLoading || !rawNotes.trim()}
+          >
+            {recapLoading ? 'Generating...' : '✨ Generate Recap'}
+          </Button>
+        </div>
+        {aiRecap ? (
+          <div className="bg-elevated rounded-xl px-4 py-3 text-txt text-sm leading-relaxed prose prose-invert prose-sm max-w-none">
+            <ReactMarkdown>{aiRecap}</ReactMarkdown>
+          </div>
+        ) : (
+          <div className="bg-elevated rounded-xl px-4 py-4 text-txt-muted text-sm text-center">
+            {isNew
+              ? 'Save the session first, then generate a recap from raw notes.'
+              : 'No recap yet. Add raw notes and click Generate Recap.'}
+          </div>
+        )}
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-3 pt-2 border-t border-border-subtle">
+        <Button
+          variant="primary"
+          onClick={handleSave}
+          disabled={saveMutation.isPending}
+        >
+          {saveMutation.isPending ? 'Saving...' : isNew ? 'Create Session' : 'Save'}
+        </Button>
+        {!isNew && (
+          <Button
+            variant="danger"
+            onClick={() => {
+              if (confirm('Delete this session?')) deleteMutation.mutate();
+            }}
+            disabled={deleteMutation.isPending}
+          >
+            Delete
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Sessions (main page) ─────────────────────────────────────────────────────
+
+export default function Sessions({ user }) {
+  const vaultId = user?.id || '';
+  const [selectedId, setSelectedId] = useState(null);
+  const [isNew, setIsNew] = useState(false);
+  const [search, setSearch] = useState('');
+
+  const { data: listData, isLoading } = useQuery({
+    queryKey: ['sessions', vaultId],
+    queryFn: () => sessions.list(vaultId),
+    enabled: !!vaultId,
+  });
+
+  const items = listData?.items || [];
+  const filtered = search
+    ? items.filter((s) => s.title.toLowerCase().includes(search.toLowerCase()))
+    : items;
+
+  const handleNewSession = () => {
+    setSelectedId(null);
+    setIsNew(true);
+  };
+
+  const handleSelect = (id) => {
+    setSelectedId(id);
+    setIsNew(false);
+  };
+
+  const handleSaved = (id) => {
+    setSelectedId(id);
+    setIsNew(false);
+  };
+
+  const handleDeleted = () => {
+    setSelectedId(null);
+    setIsNew(false);
+  };
+
+  const participantCount = (p) =>
+    p ? p.split(',').filter((s) => s.trim()).length : 0;
+
+  return (
+    <div className="flex h-full overflow-hidden">
+      {/* Left panel — session list */}
+      <div className="w-80 flex-shrink-0 flex flex-col bg-surface border-r border-border-subtle">
+        <div className="px-4 pt-5 pb-3 border-b border-border-subtle space-y-3">
+          <SectionHeader title="📜 Sessions" subtitle="Campaign session logs" />
+          <Input
+            placeholder="Search sessions..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <Button variant="primary" className="w-full" onClick={handleNewSession}>
+            + New Session
+          </Button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-3 space-y-1">
+          {isLoading ? (
+            <p className="text-txt-muted text-sm px-2 py-4">Loading...</p>
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-40 text-center space-y-2">
+              <div className="text-4xl">📜</div>
+              <p className="text-txt-muted text-sm">
+                {search ? 'No sessions match your search.' : 'No sessions yet.'}
+              </p>
+            </div>
+          ) : (
+            filtered.map((s) => {
+              const isActive = !isNew && selectedId === s.id;
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => handleSelect(s.id)}
+                  className={`w-full text-left rounded-xl px-3 py-3 transition-all ${
+                    isActive
+                      ? 'bg-accent/10 border border-accent/30'
+                      : 'hover:bg-hover'
+                  }`}
+                >
+                  <p className="font-semibold text-txt text-sm truncate">{s.title}</p>
+                  <div className="flex gap-3 mt-0.5 text-xs text-txt-muted">
+                    <span>{s.session_date || 'No date'}</span>
+                    {participantCount(s.participants) > 0 && (
+                      <span>👥 {participantCount(s.participants)}</span>
+                    )}
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* Right panel — session detail */}
+      <div className="flex-1 flex flex-col overflow-hidden bg-base">
+        {selectedId || isNew ? (
+          <SessionDetail
+            key={isNew ? 'new' : selectedId}
+            sessionId={selectedId}
+            isNew={isNew}
+            vaultId={vaultId}
+            ownerId={user?.id}
+            onSaved={handleSaved}
+            onDeleted={handleDeleted}
+          />
+        ) : (
+          <div className="flex flex-col items-center justify-center h-full text-center space-y-3">
+            <div className="text-5xl">📜</div>
+            <p className="text-txt-muted">Select a session or create a new one.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

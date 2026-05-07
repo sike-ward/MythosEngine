@@ -55,6 +55,7 @@ from server.routes import (
     invites,
     maps,
     notes,
+    sessions,
     settings,
     users,
 )
@@ -178,6 +179,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(notes.router, prefix="/notes", tags=["notes"])
+app.include_router(sessions.router, prefix="/sessions", tags=["sessions"])
 app.include_router(maps.router, prefix="/maps", tags=["maps"])
 app.include_router(characters.router, prefix="/characters", tags=["characters"])
 app.include_router(ai.router)

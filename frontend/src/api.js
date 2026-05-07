@@ -162,6 +162,19 @@ export const invites = {
   revoke: (id) => request("DELETE", `/invites/${id}`),
 };
 
+// ── Sessions ─────────────────────────────────────────────────────────────────
+export const sessions = {
+  list: (vaultId, skip = 0, limit = 50) => {
+    const params = new URLSearchParams({ vault_id: vaultId, skip, limit });
+    return request("GET", `/sessions?${params.toString()}`);
+  },
+  get: (id) => request("GET", `/sessions/${encodeURIComponent(id)}`),
+  create: (data) => request("POST", "/sessions", data),
+  update: (id, data) => request("PUT", `/sessions/${encodeURIComponent(id)}`, data),
+  delete: (id) => request("DELETE", `/sessions/${encodeURIComponent(id)}`),
+  generateRecap: (id) => request("POST", `/sessions/${encodeURIComponent(id)}/recap`),
+};
+
 // ── Characters ────────────────────────────────────────────────────────────────
 export const characters = {
   list: (vaultId = "default", type = null) => {
