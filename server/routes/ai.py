@@ -2,13 +2,16 @@
 AI endpoints.
 
 POST /ai/ask — ask the AI a question with vault context
+POST /ai/ask/stream — streaming SSE version of ask
 POST /ai/summarize — summarize text
 POST /ai/suggest-tags — suggest tags for text
 """
 
+import json
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from MythosEngine.context.app_context import AppContext
@@ -29,6 +32,7 @@ class AskRequest(BaseModel):
     """Request body for POST /ai/ask"""
     prompt: str
     vault_id: Optional[str] = None
+    history: Optional[list[dict]] = None
 
 
 class AskResponse(BaseModel):
@@ -68,6 +72,18 @@ class SuggestTagsResponse(BaseModel):
 # ============================================================================
 
 
+def _build_prompt_with_history(prompt: str, history: Optional[list[dict]]) -> str:
+    """Prepend conversation history to the prompt if provided."""
+    if not history:
+        return prompt
+    lines = []
+    for msg in history:
+        role = "User" if msg.get("role") == "user" else "Assistant"
+        content = msg.get("content", "")
+        lines.append(f"{role}: {content}")
+    return "Previous conversation:\n" + "\n".join(lines) + f"\n\nUser: {prompt}"
+
+
 @router.post("/ask", response_model=AskResponse)
 async def ask(
     req: AskRequest,
@@ -75,10 +91,7 @@ async def ask(
     user: User = Depends(get_current_user),
 ):
     """
-    Ask the AI a question, optionally with vault context.
-
-    If vault_id is provided, the AI will include relevant notes from that vault
-    in its context for a more informed response.
+    Ask the AI a question, optionally with vault context and conversation history.
 
     Requires authentication and an AI engine (optional).
     """
@@ -90,9 +103,8 @@ async def ask(
             )
 
         ai = ctx.require_ai()
-
-        # Call the AI backend
-        response, prompt_tokens, completion_tokens = ai.ask(req.prompt)
+        full_prompt = _build_prompt_with_history(req.prompt, req.history)
+        response, prompt_tokens, completion_tokens = ai.ask(full_prompt)
 
         return AskResponse(
             response=response,
@@ -106,6 +118,37 @@ async def ask(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"AI request failed: {str(e)}",
         )
+
+
+@router.post("/ask/stream")
+async def stream_ask(
+    req: AskRequest,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """
+    Streaming SSE version of /ai/ask. Yields tokens word-by-word as data events.
+    """
+    async def generate():
+        try:
+            if not ctx.has_ai():
+                yield f"data: {json.dumps({'error': 'AI engine not available'})}\n\n"
+                return
+
+            ai = ctx.require_ai()
+            full_prompt = _build_prompt_with_history(req.prompt, req.history)
+            response, _, _ = ai.ask(full_prompt)
+
+            words = response.split(" ")
+            for i, word in enumerate(words):
+                token = word + (" " if i < len(words) - 1 else "")
+                yield f"data: {json.dumps({'token': token})}\n\n"
+
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 @router.post("/summarize", response_model=SummarizeResponse)
@@ -127,8 +170,6 @@ async def summarize(
             )
 
         ai = ctx.require_ai()
-
-        # Call summarize
         summary, prompt_tokens, completion_tokens = ai.summarize(req.text)
 
         return SummarizeResponse(
@@ -166,11 +207,8 @@ async def suggest_tags(
             )
 
         ai = ctx.require_ai()
-
-        # Call suggest_tags
         tags, prompt_tokens, completion_tokens = ai.suggest_tags(req.text)
 
-        # Filter out existing tags if any
         if req.existing_tags:
             existing_lower = set(tag.lower() for tag in req.existing_tags)
             tags = [tag for tag in tags if tag.lower() not in existing_lower]

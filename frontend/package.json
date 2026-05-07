@@ -12,12 +12,17 @@
     "electron:build": "vite build && electron-builder"
   },
   "dependencies": {
+    "@hookform/resolvers": "^3.3.0",
+    "@tanstack/react-query": "^5.0.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.383.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-hook-form": "^7.51.0",
     "react-markdown": "^9.0.1",
-    "react-router-dom": "^6.23.0"
+    "react-router-dom": "^6.23.0",
+    "sonner": "^1.4.0",
+    "zod": "^3.22.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.0",

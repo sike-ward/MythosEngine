@@ -1,27 +1,30 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import SectionHeader from '@/components/SectionHeader';
 import Card from '@/components/Card';
 import Button from '@/components/Button';
-import Input, { TextArea } from '@/components/Input';
-import Badge from '@/components/Badge';
-import { notes, folders } from '@/api';
+import Input from '@/components/Input';
+import FolderTree from '@/components/browse/FolderTree';
+import NoteEditor from '@/components/browse/NoteEditor';
+import TagPanel from '@/components/browse/TagPanel';
+import MetaPanel from '@/components/browse/MetaPanel';
+import PermissionsPanel from '@/components/browse/PermissionsPanel';
+import { SkeletonLine } from '@/components/Skeleton';
+import { notes, folders, ai } from '@/api';
 
 // ════════════════════════════════════════════════════════════════════════════
-// Browse — Full vault browser with folder tree, editing, tags, metadata
+// Browse — Full vault browser (thin orchestrator)
 // ════════════════════════════════════════════════════════════════════════════
 
 export default function Browse() {
   const [searchParams] = useSearchParams();
-
-  // ── Data ─────────────────────────────────────────────────────────────────
-  const [allNotes, setAllNotes] = useState([]);
-  const [allFolders, setAllFolders] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
 
   // ── Selection & navigation ───────────────────────────────────────────────
-  const [selectedNote, setSelectedNote] = useState(null); // full NoteDetail
-  const [activeFolder, setActiveFolder] = useState(null); // folder id or null = "All"
+  const [selectedNoteId, setSelectedNoteId] = useState(null);
+  const [activeFolder, setActiveFolder] = useState(null);
   const [expandedFolders, setExpandedFolders] = useState(new Set());
 
   // ── Editing ──────────────────────────────────────────────────────────────
@@ -31,7 +34,7 @@ export default function Browse() {
 
   // ── Search ───────────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState(null); // null = not searching
+  const [searchResults, setSearchResults] = useState(null);
   const searchTimeout = useRef(null);
 
   // ── Tag filter ───────────────────────────────────────────────────────────
@@ -54,47 +57,55 @@ export default function Browse() {
   const [metaKey, setMetaKey] = useState('');
   const [metaValue, setMetaValue] = useState('');
 
-  // ── Status ───────────────────────────────────────────────────────────────
-  const [statusMsg, setStatusMsg] = useState('');
-
   // ════════════════════════════════════════════════════════════════════════
-  // Data loading
+  // React Query data fetching
   // ════════════════════════════════════════════════════════════════════════
 
-  const loadData = async () => {
-    try {
-      const [notesList, foldersList] = await Promise.all([
-        notes.list(),
-        folders.list(),
-      ]);
-      setAllNotes(notesList);
-      setAllFolders(foldersList);
-    } catch (err) {
-      console.error('Failed to load vault:', err);
-    } finally {
-      setLoading(false);
+  const { data: allFolders = [], isLoading: foldersLoading } = useQuery({
+    queryKey: ['folders'],
+    queryFn: folders.list,
+  });
+
+  const { data: allNotes = [], isLoading: notesLoading } = useQuery({
+    queryKey: ['notes'],
+    queryFn: () => notes.list(),
+  });
+
+  const { data: selectedNote, isLoading: noteLoading } = useQuery({
+    queryKey: ['note', selectedNoteId],
+    queryFn: () => notes.get(selectedNoteId),
+    enabled: !!selectedNoteId,
+  });
+
+  const loading = foldersLoading || notesLoading;
+
+  // Sync edit state when note loads
+  useEffect(() => {
+    if (selectedNote && !isEditing) {
+      setEditTitle(selectedNote.title);
+      setEditContent(selectedNote.content || '');
     }
-  };
+  }, [selectedNote]);
 
-  useEffect(() => { loadData(); }, []);
-
-  // Auto-select note from URL query param (e.g. /browse?note=abc123)
+  // Auto-select note from URL query param
   useEffect(() => {
     const noteId = searchParams.get('note');
-    if (noteId && !loading && allNotes.length > 0 && !selectedNote) {
-      handleSelectNote({ id: noteId });
-    }
-  }, [loading, allNotes, searchParams]);
+    if (noteId) setSelectedNoteId(noteId);
+  }, [searchParams]);
 
-  const flash = (msg) => {
-    setStatusMsg(msg);
-    setTimeout(() => setStatusMsg(''), 3000);
-  };
+  // ── Ctrl+S to save ───────────────────────────────────────────────────────
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.ctrlKey && e.key === 's' && isEditing) {
+        e.preventDefault();
+        handleSave();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [isEditing, editTitle, editContent, selectedNoteId]);
 
-  // ════════════════════════════════════════════════════════════════════════
-  // Search (debounced, uses backend full-text search)
-  // ════════════════════════════════════════════════════════════════════════
-
+  // ── Search (debounced) ───────────────────────────────────────────────────
   useEffect(() => {
     if (!searchQuery.trim()) {
       setSearchResults(null);
@@ -116,25 +127,16 @@ export default function Browse() {
   // Derived data
   // ════════════════════════════════════════════════════════════════════════
 
-  // All unique tags across notes
   const allTags = [...new Set(allNotes.flatMap((n) => n.tags || []))].sort();
 
-  // Notes to display (filtered by folder and tag)
   const displayNotes = (() => {
     if (searchResults) return searchResults;
     let list = allNotes;
-    if (activeFolder) {
-      list = list.filter((n) => n.folder_id === activeFolder);
-    }
-    if (tagFilter) {
-      list = list.filter((n) =>
-        (n.tags || []).some((t) => t.toLowerCase() === tagFilter.toLowerCase())
-      );
-    }
+    if (activeFolder) list = list.filter((n) => n.folder_id === activeFolder);
+    if (tagFilter) list = list.filter((n) => (n.tags || []).some((t) => t.toLowerCase() === tagFilter.toLowerCase()));
     return list;
   })();
 
-  // Group notes by folder for tree display
   const notesByFolder = {};
   allNotes.forEach((n) => {
     const fid = n.folder_id || '__unfiled__';
@@ -143,207 +145,207 @@ export default function Browse() {
   });
   const unfiledNotes = notesByFolder['__unfiled__'] || [];
 
+  const wordCount = (text) => text ? text.trim().split(/\s+/).filter(Boolean).length : 0;
+
   // ════════════════════════════════════════════════════════════════════════
-  // Note selection
+  // Mutations
   // ════════════════════════════════════════════════════════════════════════
 
-  const handleSelectNote = async (noteItem) => {
-    setIsEditing(false);
-    setShowMetaEditor(false);
-    try {
-      const detail = await notes.get(noteItem.id);
-      setSelectedNote(detail);
-      setEditTitle(detail.title);
-      setEditContent(detail.content || '');
-    } catch (err) {
-      console.error('Failed to load note:', err);
-      flash('Failed to load note');
-    }
+  const invalidateAll = () => {
+    queryClient.invalidateQueries({ queryKey: ['notes'] });
+    queryClient.invalidateQueries({ queryKey: ['folders'] });
+    if (selectedNoteId) queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
   };
 
-  // ════════════════════════════════════════════════════════════════════════
-  // CRUD operations
-  // ════════════════════════════════════════════════════════════════════════
-
-  const handleSave = async () => {
-    if (!selectedNote) return;
-    try {
-      const updated = await notes.update(selectedNote.id, {
-        title: editTitle,
-        content: editContent,
-      });
-      setSelectedNote(updated);
+  const saveNoteMutation = useMutation({
+    mutationFn: (data) => notes.update(selectedNoteId, data),
+    onSuccess: (updated) => {
+      queryClient.invalidateQueries({ queryKey: ['notes'] });
+      queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
       setIsEditing(false);
-      flash('Saved');
-      await loadData();
-    } catch (err) {
-      flash('Failed to save: ' + err.message);
-    }
-  };
+      toast.success('Saved');
+    },
+    onError: (err) => toast.error('Failed to save: ' + err.message),
+  });
 
-  const handleDelete = async () => {
-    if (!selectedNote) return;
-    if (!confirm(`Delete "${selectedNote.title}"? This cannot be undone.`)) return;
-    try {
-      await notes.delete(selectedNote.id);
-      setSelectedNote(null);
-      flash('Note deleted');
-      await loadData();
-    } catch (err) {
-      flash('Failed to delete: ' + err.message);
-    }
-  };
+  const deleteNoteMutation = useMutation({
+    mutationFn: (id) => notes.delete(id),
+    onSuccess: () => {
+      setSelectedNoteId(null);
+      invalidateAll();
+      toast.success('Note deleted');
+    },
+    onError: (err) => toast.error('Failed to delete: ' + err.message),
+  });
 
-  const handleCreateNote = async () => {
-    if (!newNoteTitle.trim()) return;
-    try {
-      const created = await notes.create(newNoteTitle, '', activeFolder);
+  const createNoteMutation = useMutation({
+    mutationFn: ({ title, folderId }) => notes.create(title, '', folderId),
+    onSuccess: (created) => {
       setShowCreateNote(false);
       setNewNoteTitle('');
-      flash('Note created');
-      await loadData();
-      await handleSelectNote(created);
-    } catch (err) {
-      flash('Failed to create note: ' + err.message);
-    }
-  };
+      queryClient.invalidateQueries({ queryKey: ['notes'] });
+      setSelectedNoteId(created.id);
+      toast.success('Note created');
+    },
+    onError: (err) => toast.error('Failed to create note: ' + err.message),
+  });
 
-  const handleCreateFolder = async () => {
-    if (!newFolderName.trim()) return;
-    try {
-      await folders.create(newFolderName);
+  const createFolderMutation = useMutation({
+    mutationFn: (name) => folders.create(name),
+    onSuccess: () => {
       setShowCreateFolder(false);
       setNewFolderName('');
-      flash('Folder created');
-      await loadData();
-    } catch (err) {
-      flash('Failed to create folder: ' + err.message);
-    }
+      queryClient.invalidateQueries({ queryKey: ['folders'] });
+      toast.success('Folder created');
+    },
+    onError: (err) => toast.error('Failed to create folder: ' + err.message),
+  });
+
+  const deleteFolderMutation = useMutation({
+    mutationFn: (id) => folders.delete(id),
+    onSuccess: (_, id) => {
+      if (activeFolder === id) setActiveFolder(null);
+      queryClient.invalidateQueries({ queryKey: ['folders'] });
+      queryClient.invalidateQueries({ queryKey: ['notes'] });
+      toast.success('Folder deleted');
+    },
+    onError: (err) => toast.error('Failed to delete folder: ' + err.message),
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Handlers
+  // ════════════════════════════════════════════════════════════════════════
+
+  const handleSelectNote = (noteItem) => {
+    setIsEditing(false);
+    setShowMetaEditor(false);
+    setShowMoveDialog(false);
+    setSelectedNoteId(noteItem.id);
   };
 
-  const handleDeleteFolder = async (folderId) => {
+  const handleSave = () => {
+    if (!selectedNoteId) return;
+    saveNoteMutation.mutate({ title: editTitle, content: editContent });
+  };
+
+  const handleDelete = () => {
+    if (!selectedNote) return;
+    if (!confirm(`Delete "${selectedNote.title}"? This cannot be undone.`)) return;
+    deleteNoteMutation.mutate(selectedNote.id);
+  };
+
+  const handleCreateNote = () => {
+    if (!newNoteTitle.trim()) return;
+    createNoteMutation.mutate({ title: newNoteTitle, folderId: activeFolder });
+  };
+
+  const handleCreateFolder = () => {
+    if (!newFolderName.trim()) return;
+    createFolderMutation.mutate(newFolderName);
+  };
+
+  const handleDeleteFolder = (folderId) => {
     const folder = allFolders.find((f) => f.id === folderId);
     if (!confirm(`Delete folder "${folder?.name}"? Notes inside will become unfiled.`)) return;
-    try {
-      await folders.delete(folderId);
-      if (activeFolder === folderId) setActiveFolder(null);
-      flash('Folder deleted');
-      await loadData();
-    } catch (err) {
-      flash('Failed to delete folder: ' + err.message);
-    }
+    deleteFolderMutation.mutate(folderId);
   };
-
-  // ════════════════════════════════════════════════════════════════════════
-  // Tag operations
-  // ════════════════════════════════════════════════════════════════════════
 
   const handleAddTag = async () => {
     if (!selectedNote || !newTag.trim()) return;
     try {
-      const updated = await notes.addTag(selectedNote.id, newTag.trim());
-      setSelectedNote(updated);
+      await notes.addTag(selectedNote.id, newTag.trim());
       setNewTag('');
-      flash('Tag added');
-      await loadData();
+      queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
+      queryClient.invalidateQueries({ queryKey: ['notes'] });
+      toast.success('Tag added');
     } catch (err) {
-      flash('Failed to add tag: ' + err.message);
+      toast.error('Failed to add tag: ' + err.message);
     }
   };
 
   const handleRemoveTag = async (tag) => {
     if (!selectedNote) return;
     try {
-      const updated = await notes.removeTag(selectedNote.id, tag);
-      setSelectedNote(updated);
-      flash('Tag removed');
-      await loadData();
+      await notes.removeTag(selectedNote.id, tag);
+      queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
+      queryClient.invalidateQueries({ queryKey: ['notes'] });
+      toast.success('Tag removed');
     } catch (err) {
-      flash('Failed to remove tag: ' + err.message);
+      toast.error('Failed to remove tag: ' + err.message);
     }
   };
 
-  // ════════════════════════════════════════════════════════════════════════
-  // Move note
-  // ════════════════════════════════════════════════════════════════════════
+  const handleSuggestTags = async () => {
+    if (!selectedNote) return;
+    try {
+      const result = await ai.suggestTags(selectedNote.content || selectedNote.title, selectedNote.tags || []);
+      if (result.tags?.length > 0) {
+        toast.success(`Suggested: ${result.tags.join(', ')}`);
+      } else {
+        toast.success('No new tags suggested');
+      }
+    } catch (err) {
+      toast.error('Tag suggestion failed: ' + err.message);
+    }
+  };
+
+  const handleSummarize = async () => {
+    if (!selectedNote?.content) { toast.error('Note has no content to summarize'); return; }
+    try {
+      const result = await ai.summarize(selectedNote.content);
+      toast.success('Summary: ' + result.summary.slice(0, 80) + (result.summary.length > 80 ? '…' : ''));
+    } catch (err) {
+      toast.error('Summarization failed: ' + err.message);
+    }
+  };
 
   const handleMoveNote = async (destFolderId) => {
     if (!selectedNote) return;
     try {
       await notes.move(selectedNote.id, destFolderId || null);
       setShowMoveDialog(false);
-      flash('Note moved');
-      const updated = await notes.get(selectedNote.id);
-      setSelectedNote(updated);
-      await loadData();
+      queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
+      queryClient.invalidateQueries({ queryKey: ['notes'] });
+      toast.success('Note moved');
     } catch (err) {
-      flash('Failed to move: ' + err.message);
+      toast.error('Failed to move: ' + err.message);
     }
   };
-
-  // ════════════════════════════════════════════════════════════════════════
-  // Metadata operations
-  // ════════════════════════════════════════════════════════════════════════
 
   const handleAddMeta = async () => {
     if (!selectedNote || !metaKey.trim()) return;
     try {
-      const updated = await notes.updateMeta(selectedNote.id, {
-        [metaKey.trim()]: metaValue,
-      });
-      setSelectedNote(updated);
+      await notes.updateMeta(selectedNote.id, { [metaKey.trim()]: metaValue });
       setMetaKey('');
       setMetaValue('');
-      flash('Metadata updated');
+      queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
+      toast.success('Metadata updated');
     } catch (err) {
-      flash('Failed to update metadata: ' + err.message);
+      toast.error('Failed to update metadata: ' + err.message);
     }
   };
 
   const handleRemoveMeta = async (key) => {
     if (!selectedNote) return;
     try {
-      const updated = await notes.updateMeta(selectedNote.id, { [key]: '' });
-      setSelectedNote(updated);
-      flash('Metadata removed');
+      await notes.updateMeta(selectedNote.id, { [key]: '' });
+      queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
+      toast.success('Metadata removed');
     } catch (err) {
-      flash('Failed to remove metadata: ' + err.message);
+      toast.error('Failed to remove metadata: ' + err.message);
     }
   };
-
-  // ════════════════════════════════════════════════════════════════════════
-  // Permissions
-  // ════════════════════════════════════════════════════════════════════════
-
-  const handleUpdatePermissions = async (newPerms) => {
-    if (!selectedNote) return;
-    try {
-      const updated = await notes.update(selectedNote.id, { permissions: newPerms });
-      setSelectedNote(updated);
-      flash('Permissions updated');
-    } catch (err) {
-      flash('Failed to update permissions: ' + err.message);
-    }
-  };
-
-  // ════════════════════════════════════════════════════════════════════════
-  // Group assignment
-  // ════════════════════════════════════════════════════════════════════════
 
   const handleSetGroup = async (groupId) => {
     if (!selectedNote) return;
     try {
-      const updated = await notes.update(selectedNote.id, { group_id: groupId || null });
-      setSelectedNote(updated);
-      flash('Group updated');
+      await notes.update(selectedNote.id, { group_id: groupId || null });
+      queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
+      toast.success('Group updated');
     } catch (err) {
-      flash('Failed to update group: ' + err.message);
+      toast.error('Failed to update group: ' + err.message);
     }
   };
-
-  // ════════════════════════════════════════════════════════════════════════
-  // Folder tree toggle
-  // ════════════════════════════════════════════════════════════════════════
 
   const toggleFolder = (folderId) => {
     setExpandedFolders((prev) => {
@@ -355,13 +357,6 @@ export default function Browse() {
   };
 
   // ════════════════════════════════════════════════════════════════════════
-  // Helper: word count
-  // ════════════════════════════════════════════════════════════════════════
-
-  const wordCount = (text) =>
-    text ? text.trim().split(/\s+/).filter(Boolean).length : 0;
-
-  // ════════════════════════════════════════════════════════════════════════
   // RENDER
   // ════════════════════════════════════════════════════════════════════════
 
@@ -369,22 +364,10 @@ export default function Browse() {
     <div className="p-6 flex flex-col h-full gap-4">
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <div className="flex justify-between items-start">
-        <SectionHeader
-          title="📖 Browse"
-          subtitle="Explore and manage your vault."
-        />
+        <SectionHeader title="📖 Browse" subtitle="Explore and manage your vault." />
         <div className="flex gap-2 items-center">
-          {statusMsg && (
-            <span className="text-accent text-xs font-medium bg-accent/10 px-3 py-1.5 rounded-lg">
-              {statusMsg}
-            </span>
-          )}
-          <Button variant="primary" size="sm" onClick={() => setShowCreateNote(true)}>
-            + Note
-          </Button>
-          <Button variant="secondary" size="sm" onClick={() => setShowCreateFolder(true)}>
-            + Folder
-          </Button>
+          <Button variant="primary" size="sm" onClick={() => setShowCreateNote(true)}>+ Note</Button>
+          <Button variant="secondary" size="sm" onClick={() => setShowCreateFolder(true)}>+ Folder</Button>
         </div>
       </div>
 
@@ -423,253 +406,58 @@ export default function Browse() {
       {/* ── Main layout (3-panel) ──────────────────────────────────────── */}
       <div className="flex gap-4 flex-1 overflow-hidden min-h-0">
 
-        {/* ════ LEFT PANEL — Folder tree + search ════════════════════════ */}
-        <Card className="w-72 flex-shrink-0 flex flex-col overflow-hidden p-0">
-          {/* Search bar */}
-          <div className="p-3 border-b border-txt-muted/10">
-            <input
-              placeholder="Search notes..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-elevated rounded-lg px-3 py-2 text-sm text-txt border border-transparent focus:border-accent focus:outline-none transition placeholder:text-txt-muted"
-            />
-          </div>
+        {/* LEFT PANEL */}
+        <FolderTree
+          allFolders={allFolders}
+          allNotes={allNotes}
+          notesByFolder={notesByFolder}
+          unfiledNotes={unfiledNotes}
+          activeFolder={activeFolder}
+          onFolderSelect={setActiveFolder}
+          expandedFolders={expandedFolders}
+          onToggleFolder={toggleFolder}
+          selectedNoteId={selectedNoteId}
+          onNoteSelect={handleSelectNote}
+          onDeleteFolder={handleDeleteFolder}
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          searchResults={searchResults}
+          allTags={allTags}
+          tagFilter={tagFilter}
+          onTagFilter={setTagFilter}
+          loading={loading}
+        />
 
-          {/* Tag filter */}
-          {allTags.length > 0 && (
-            <div className="px-3 py-2 border-b border-txt-muted/10">
-              <select
-                value={tagFilter}
-                onChange={(e) => setTagFilter(e.target.value)}
-                className="w-full bg-elevated rounded-lg px-2 py-1.5 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
-              >
-                <option value="">All Tags</option>
-                {allTags.map((t) => (
-                  <option key={t} value={t}>{t} ({allNotes.filter((n) => (n.tags || []).includes(t)).length})</option>
-                ))}
-              </select>
-            </div>
-          )}
+        {/* CENTER PANEL */}
+        <NoteEditor
+          selectedNote={selectedNote}
+          allFolders={allFolders}
+          isEditing={isEditing}
+          editTitle={editTitle}
+          editContent={editContent}
+          onTitleChange={setEditTitle}
+          onContentChange={setEditContent}
+          onEdit={() => setIsEditing(true)}
+          onSave={handleSave}
+          onCancel={() => {
+            setIsEditing(false);
+            if (selectedNote) {
+              setEditTitle(selectedNote.title);
+              setEditContent(selectedNote.content || '');
+            }
+          }}
+          onDelete={handleDelete}
+          onSummarize={handleSummarize}
+          onSuggestTags={handleSuggestTags}
+          showMoveDialog={showMoveDialog}
+          onToggleMove={setShowMoveDialog}
+          onMove={handleMoveNote}
+          wordCount={wordCount}
+          activeFolder={activeFolder}
+          noteLoading={noteLoading && !!selectedNoteId}
+        />
 
-          {/* Tree area */}
-          <div className="flex-1 overflow-y-auto p-2">
-            {loading ? (
-              <p className="text-txt-muted text-sm p-2">Loading...</p>
-            ) : searchResults ? (
-              /* Search results mode */
-              <div className="space-y-0.5">
-                <p className="text-txt-muted text-xs px-2 py-1 font-medium">
-                  {searchResults.length} result{searchResults.length !== 1 ? 's' : ''}
-                </p>
-                {searchResults.map((n) => (
-                  <NoteTreeItem
-                    key={n.id}
-                    note={n}
-                    isSelected={selectedNote?.id === n.id}
-                    onClick={() => handleSelectNote(n)}
-                  />
-                ))}
-              </div>
-            ) : (
-              /* Folder tree mode */
-              <div className="space-y-0.5">
-                {/* All Notes button */}
-                <button
-                  onClick={() => setActiveFolder(null)}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition ${
-                    !activeFolder
-                      ? 'bg-accent/10 text-accent font-semibold'
-                      : 'text-txt hover:bg-hover'
-                  }`}
-                >
-                  📋 All Notes ({allNotes.length})
-                </button>
-
-                {/* Folders */}
-                {allFolders.map((folder) => {
-                  const folderNotes = notesByFolder[folder.id] || [];
-                  const isExpanded = expandedFolders.has(folder.id);
-                  const isActive = activeFolder === folder.id;
-
-                  return (
-                    <div key={folder.id}>
-                      <div className="flex items-center group">
-                        <button
-                          onClick={() => { toggleFolder(folder.id); setActiveFolder(folder.id); }}
-                          className={`flex-1 text-left px-3 py-2 rounded-lg text-sm transition flex items-center gap-2 ${
-                            isActive
-                              ? 'bg-accent/10 text-accent font-semibold'
-                              : 'text-txt hover:bg-hover'
-                          }`}
-                        >
-                          <span className="text-xs">{isExpanded ? '▼' : '▶'}</span>
-                          <span>📁 {folder.name}</span>
-                          <span className="text-txt-muted text-xs ml-auto">{folderNotes.length}</span>
-                        </button>
-                        <button
-                          onClick={() => handleDeleteFolder(folder.id)}
-                          className="hidden group-hover:block text-danger text-xs px-1 hover:bg-danger/10 rounded"
-                          title="Delete folder"
-                        >
-                          ✕
-                        </button>
-                      </div>
-
-                      {/* Notes inside folder */}
-                      {isExpanded && folderNotes.length > 0 && (
-                        <div className="ml-5 space-y-0.5">
-                          {folderNotes.map((n) => (
-                            <NoteTreeItem
-                              key={n.id}
-                              note={n}
-                              isSelected={selectedNote?.id === n.id}
-                              onClick={() => handleSelectNote(n)}
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-
-                {/* Unfiled notes */}
-                {unfiledNotes.length > 0 && (
-                  <div>
-                    <button
-                      onClick={() => { toggleFolder('__unfiled__'); setActiveFolder(null); }}
-                      className="w-full text-left px-3 py-2 rounded-lg text-sm text-txt-muted hover:bg-hover transition flex items-center gap-2"
-                    >
-                      <span className="text-xs">{expandedFolders.has('__unfiled__') ? '▼' : '▶'}</span>
-                      <span>📄 Unfiled</span>
-                      <span className="text-xs ml-auto">{unfiledNotes.length}</span>
-                    </button>
-                    {expandedFolders.has('__unfiled__') && (
-                      <div className="ml-5 space-y-0.5">
-                        {unfiledNotes.map((n) => (
-                          <NoteTreeItem
-                            key={n.id}
-                            note={n}
-                            isSelected={selectedNote?.id === n.id}
-                            onClick={() => handleSelectNote(n)}
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </Card>
-
-        {/* ════ CENTER PANEL — Note content ══════════════════════════════ */}
-        <Card className="flex-1 flex flex-col overflow-hidden p-0">
-          {selectedNote ? (
-            <>
-              {/* Toolbar */}
-              <div className="flex items-center gap-2 px-4 py-3 border-b border-txt-muted/10">
-                {!isEditing ? (
-                  <>
-                    <h2 className="text-lg font-bold text-txt flex-1 truncate">
-                      {selectedNote.title}
-                    </h2>
-                    <Button variant="secondary" size="sm" onClick={() => setIsEditing(true)}>
-                      Edit
-                    </Button>
-                    <Button variant="secondary" size="sm" onClick={() => setShowMoveDialog(!showMoveDialog)}>
-                      Move
-                    </Button>
-                    <Button variant="danger" size="sm" onClick={handleDelete}>
-                      Delete
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <input
-                      value={editTitle}
-                      onChange={(e) => setEditTitle(e.target.value)}
-                      className="flex-1 bg-elevated rounded-lg px-3 py-1.5 text-lg font-bold text-txt border border-transparent focus:border-accent focus:outline-none"
-                    />
-                    <Button variant="primary" size="sm" onClick={handleSave}>
-                      Save
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => {
-                      setIsEditing(false);
-                      setEditTitle(selectedNote.title);
-                      setEditContent(selectedNote.content || '');
-                    }}>
-                      Cancel
-                    </Button>
-                  </>
-                )}
-              </div>
-
-              {/* Move dialog */}
-              {showMoveDialog && (
-                <div className="px-4 py-2 bg-elevated/50 border-b border-txt-muted/10 flex flex-wrap gap-2 items-center">
-                  <span className="text-txt-muted text-xs font-medium">Move to:</span>
-                  <Button
-                    variant={!selectedNote.folder_id ? 'primary' : 'ghost'}
-                    size="sm"
-                    onClick={() => handleMoveNote(null)}
-                  >
-                    Unfiled
-                  </Button>
-                  {allFolders.map((f) => (
-                    <Button
-                      key={f.id}
-                      variant={selectedNote.folder_id === f.id ? 'primary' : 'ghost'}
-                      size="sm"
-                      onClick={() => handleMoveNote(f.id)}
-                    >
-                      📁 {f.name}
-                    </Button>
-                  ))}
-                </div>
-              )}
-
-              {/* Content area */}
-              <div className="flex-1 overflow-y-auto p-5">
-                {isEditing ? (
-                  <textarea
-                    value={editContent}
-                    onChange={(e) => setEditContent(e.target.value)}
-                    className="w-full h-full min-h-[300px] bg-elevated rounded-xl px-4 py-3 text-txt border-2 border-transparent focus:border-accent focus:outline-none transition resize-none font-mono text-sm"
-                  />
-                ) : (
-                  <div className="prose prose-invert max-w-none">
-                    <div className="text-txt whitespace-pre-wrap text-sm leading-relaxed">
-                      {selectedNote.content || 'No content'}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Bottom bar — word count + folder info */}
-              <div className="px-4 py-2 border-t border-txt-muted/10 flex justify-between items-center text-xs text-txt-muted">
-                <span>
-                  {wordCount(selectedNote.content)} words
-                  {selectedNote.folder_id && (
-                    <> · 📁 {allFolders.find((f) => f.id === selectedNote.folder_id)?.name || selectedNote.folder_id}</>
-                  )}
-                </span>
-                <span>
-                  Modified: {new Date(selectedNote.last_modified).toLocaleString()}
-                </span>
-              </div>
-            </>
-          ) : (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center space-y-3">
-                <div className="text-4xl">📖</div>
-                <p className="text-txt-muted">Select a note to view</p>
-                <p className="text-txt-muted text-xs">or create a new one with + Note</p>
-              </div>
-            </div>
-          )}
-        </Card>
-
-        {/* ════ RIGHT PANEL — Metadata & properties ═════════════════════ */}
+        {/* RIGHT PANEL */}
         {selectedNote && (
           <Card className="w-72 flex-shrink-0 flex flex-col overflow-hidden p-0">
             <div className="px-4 py-3 border-b border-txt-muted/10">
@@ -677,164 +465,34 @@ export default function Browse() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-3 space-y-4">
+              <TagPanel
+                selectedNote={selectedNote}
+                newTag={newTag}
+                onNewTagChange={setNewTag}
+                onAddTag={handleAddTag}
+                onRemoveTag={handleRemoveTag}
+                onSuggestTags={handleSuggestTags}
+              />
 
-              {/* ── Tags ──────────────────────────────────────────────── */}
-              <div>
-                <p className="text-xs font-bold text-txt-muted uppercase tracking-wider mb-2">Tags</p>
-                <div className="flex flex-wrap gap-1.5 mb-2">
-                  {(selectedNote.tags || []).length > 0 ? (
-                    selectedNote.tags.map((tag) => (
-                      <span
-                        key={tag}
-                        className="inline-flex items-center gap-1 bg-accent/10 text-accent rounded-full px-2.5 py-0.5 text-xs font-medium"
-                      >
-                        {tag}
-                        <button
-                          onClick={() => handleRemoveTag(tag)}
-                          className="hover:text-danger transition text-[10px]"
-                        >
-                          ✕
-                        </button>
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-txt-muted text-xs">No tags</span>
-                  )}
-                </div>
-                <div className="flex gap-1">
-                  <input
-                    value={newTag}
-                    onChange={(e) => setNewTag(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleAddTag()}
-                    placeholder="Add tag..."
-                    className="flex-1 bg-elevated rounded-lg px-2 py-1 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
-                  />
-                  <button
-                    onClick={handleAddTag}
-                    disabled={!newTag.trim()}
-                    className="text-accent text-xs font-bold px-2 hover:bg-accent/10 rounded-lg transition disabled:opacity-30"
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
+              <PermissionsPanel
+                selectedNote={selectedNote}
+                allFolders={allFolders}
+                onSetGroup={handleSetGroup}
+              />
 
-              {/* ── Folder ────────────────────────────────────────────── */}
-              <div>
-                <p className="text-xs font-bold text-txt-muted uppercase tracking-wider mb-1">Folder</p>
-                <p className="text-sm text-txt">
-                  {selectedNote.folder_id
-                    ? `📁 ${allFolders.find((f) => f.id === selectedNote.folder_id)?.name || selectedNote.folder_id}`
-                    : '📄 Unfiled'}
-                </p>
-              </div>
+              <MetaPanel
+                selectedNote={selectedNote}
+                showMetaEditor={showMetaEditor}
+                onToggleMetaEditor={() => setShowMetaEditor((v) => !v)}
+                metaKey={metaKey}
+                metaValue={metaValue}
+                onMetaKeyChange={setMetaKey}
+                onMetaValueChange={setMetaValue}
+                onAddMeta={handleAddMeta}
+                onRemoveMeta={handleRemoveMeta}
+              />
 
-              {/* ── Group ─────────────────────────────────────────────── */}
-              <div>
-                <p className="text-xs font-bold text-txt-muted uppercase tracking-wider mb-1">Group</p>
-                <input
-                  value={selectedNote.group_id || ''}
-                  onChange={(e) => handleSetGroup(e.target.value)}
-                  placeholder="None"
-                  className="w-full bg-elevated rounded-lg px-2 py-1 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
-                />
-              </div>
-
-              {/* ── Permissions ────────────────────────────────────────── */}
-              <div>
-                <p className="text-xs font-bold text-txt-muted uppercase tracking-wider mb-1">Permissions</p>
-                {Object.keys(selectedNote.permissions || {}).length > 0 ? (
-                  <div className="space-y-1">
-                    {Object.entries(selectedNote.permissions).map(([userId, role]) => (
-                      <div key={userId} className="flex justify-between text-xs">
-                        <span className="text-txt truncate">{userId}</span>
-                        <Badge label={role} variant={role === 'admin' ? 'admin' : 'player'} />
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-txt-muted text-xs">Owner only</p>
-                )}
-              </div>
-
-              {/* ── Links ─────────────────────────────────────────────── */}
-              <div>
-                <p className="text-xs font-bold text-txt-muted uppercase tracking-wider mb-1">
-                  Links ({(selectedNote.links || []).length})
-                </p>
-                {(selectedNote.links || []).length > 0 ? (
-                  <div className="space-y-1">
-                    {selectedNote.links.map((linkId) => (
-                      <button
-                        key={linkId}
-                        onClick={() => handleSelectNote({ id: linkId })}
-                        className="block w-full text-left text-xs text-accent hover:underline truncate"
-                      >
-                        🔗 {linkId}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-txt-muted text-xs">No links</p>
-                )}
-              </div>
-
-              {/* ── Metadata (YAML/frontmatter) ───────────────────────── */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <p className="text-xs font-bold text-txt-muted uppercase tracking-wider">Metadata</p>
-                  <button
-                    onClick={() => setShowMetaEditor(!showMetaEditor)}
-                    className="text-accent text-xs font-bold hover:bg-accent/10 px-1.5 rounded transition"
-                  >
-                    {showMetaEditor ? '−' : '+'}
-                  </button>
-                </div>
-                {Object.keys(selectedNote.meta || {}).length > 0 ? (
-                  <div className="space-y-1">
-                    {Object.entries(selectedNote.meta).map(([k, v]) => (
-                      <div key={k} className="flex items-center justify-between text-xs group">
-                        <span className="text-txt-muted font-medium">{k}:</span>
-                        <span className="text-txt truncate ml-2">{v}</span>
-                        <button
-                          onClick={() => handleRemoveMeta(k)}
-                          className="hidden group-hover:block text-danger text-[10px] ml-1"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-txt-muted text-xs">No metadata</p>
-                )}
-                {showMetaEditor && (
-                  <div className="mt-2 space-y-1">
-                    <input
-                      value={metaKey}
-                      onChange={(e) => setMetaKey(e.target.value)}
-                      placeholder="Key"
-                      className="w-full bg-elevated rounded-lg px-2 py-1 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
-                    />
-                    <input
-                      value={metaValue}
-                      onChange={(e) => setMetaValue(e.target.value)}
-                      placeholder="Value"
-                      onKeyDown={(e) => e.key === 'Enter' && handleAddMeta()}
-                      className="w-full bg-elevated rounded-lg px-2 py-1 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
-                    />
-                    <button
-                      onClick={handleAddMeta}
-                      disabled={!metaKey.trim()}
-                      className="text-accent text-xs font-bold hover:bg-accent/10 px-2 py-0.5 rounded transition disabled:opacity-30"
-                    >
-                      Add
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* ── AI Summary ────────────────────────────────────────── */}
+              {/* AI Summary */}
               {selectedNote.ai_summary && (
                 <div>
                   <p className="text-xs font-bold text-txt-muted uppercase tracking-wider mb-1">AI Summary</p>
@@ -842,7 +500,7 @@ export default function Browse() {
                 </div>
               )}
 
-              {/* ── File info ─────────────────────────────────────────── */}
+              {/* File info */}
               <div className="border-t border-txt-muted/10 pt-3">
                 <p className="text-xs font-bold text-txt-muted uppercase tracking-wider mb-2">Info</p>
                 <div className="space-y-1 text-xs text-txt-muted">
@@ -873,33 +531,5 @@ export default function Browse() {
         )}
       </div>
     </div>
-  );
-}
-
-
-// ════════════════════════════════════════════════════════════════════════════
-// Sub-component: single note in tree
-// ════════════════════════════════════════════════════════════════════════════
-
-function NoteTreeItem({ note, isSelected, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`w-full text-left px-3 py-1.5 rounded-lg text-sm transition truncate ${
-        isSelected
-          ? 'bg-accent/10 text-accent font-medium'
-          : 'text-txt hover:bg-hover'
-      }`}
-    >
-      <div className="flex items-center gap-1.5">
-        <span className="text-xs flex-shrink-0">📝</span>
-        <span className="truncate">{note.title || note.name || 'Untitled'}</span>
-        {(note.tags || []).length > 0 && (
-          <span className="text-txt-muted text-[10px] ml-auto flex-shrink-0">
-            {note.tags.length} tag{note.tags.length !== 1 ? 's' : ''}
-          </span>
-        )}
-      </div>
-    </button>
   );
 }
