@@ -1,0 +1,7 @@
+@echo off
+echo Pulling latest MythosEngine updates from GitHub...
+cd /d "%~dp0"
+git pull origin main
+echo.
+echo Done! Your local files are now up to date.
+pause
