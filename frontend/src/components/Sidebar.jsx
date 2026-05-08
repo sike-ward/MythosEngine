@@ -8,6 +8,7 @@ import {
   Wand2,
   Globe,
   Map,
+  Layers,
   Settings,
   LogOut,
   Shield,
@@ -18,8 +19,10 @@ import { useRealtime } from '@/context/RealtimeContext';
 const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeVaultId, onVaultChange }) => {
   const { onlineUsers } = useRealtime();
   const isAdmin = user?.roles?.includes?.('admin');
+  const activeVaultName = vaults.find((v) => v.id === activeVaultId)?.name;
   const navItems = [
     { icon: Home, label: 'Dashboard', path: '/' },
+    { icon: Layers, label: 'Vaults', path: '/vaults' },
     { icon: Sparkles, label: 'AI', path: '/chat' },
     { icon: BookOpen, label: 'Browse', path: '/browse' },
     { icon: Users, label: 'Characters', path: '/characters' },
@@ -45,6 +48,15 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
           <label className="block text-[11px] uppercase tracking-widest text-txt-muted font-bold">
             Active Vault
           </label>
+          {activeVaultName && (
+            <button
+              onClick={() => onNavigate('/vaults')}
+              className="w-full text-left text-sm font-medium text-accent truncate hover:underline"
+              title={activeVaultName}
+            >
+              {activeVaultName}
+            </button>
+          )}
           <select
             value={activeVaultId || ''}
             onChange={(e) => onVaultChange?.(e.target.value)}

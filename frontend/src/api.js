@@ -217,6 +217,7 @@ export const invites = {
 
 export const vaults = {
   list: () => request("GET", "/vaults"),
+  get: (id) => request("GET", `/vaults/${encodeURIComponent(id)}`),
   create: (data) => request("POST", "/vaults", data),
   update: (id, data) => request("PUT", `/vaults/${encodeURIComponent(id)}`, data),
   remove: (id) => request("DELETE", `/vaults/${encodeURIComponent(id)}`),
