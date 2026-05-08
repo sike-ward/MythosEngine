@@ -76,7 +76,7 @@ export default function Login({ onLogin, needsSetup = false }) {
     e.preventDefault();
     setApiError('');
     if (!regInviteCode || !regEmail || !regDisplayName || !regPassword) {
-      setApiError('All fields are required');
+      toast.error('All fields are required');
       return;
     }
     setLoading(true);
@@ -85,7 +85,7 @@ export default function Login({ onLogin, needsSetup = false }) {
       setToken(data.token);
       onLogin(data.token, data.user);
     } catch (err) {
-      setApiError(err.message || 'Registration failed');
+      toast.error(err.message || 'Registration failed');
     } finally {
       setLoading(false);
     }
@@ -236,7 +236,6 @@ export default function Login({ onLogin, needsSetup = false }) {
           <>
             <h2 className="text-xl font-bold text-txt mb-2">Create account</h2>
             <p className="text-txt-secondary text-sm mb-6">Join the worlds of MythosEngine</p>
-            <ApiErrorBox msg={apiError} />
             <form onSubmit={handleRegister} className="space-y-4">
               <Input
                 label="Invite Code"

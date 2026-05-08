@@ -197,7 +197,7 @@ export default function Browse({ user }) {
   const wordCount = (text) => text ? text.trim().split(/\s+/).filter(Boolean).length : 0;
   const editingPresence = editing.find((item) => item.note_id === selectedNoteId && item.user_id !== user?.id);
   const permissionSubjects = new Set([user?.id, ...(user?.groups || [])].filter(Boolean));
-  const permissionRank = { read: 1, write: 2, admin: 3 };
+  const permissionRank = { read: 1, write: 2 };
   const notePermissionRole = selectedNote
     ? [...permissionSubjects]
         .map((subject) => selectedNote.permissions?.[subject])
@@ -210,7 +210,6 @@ export default function Browse({ user }) {
     (
       selectedNote.owner_id === user?.id ||
       notePermissionRole === 'write' ||
-      notePermissionRole === 'admin' ||
       (user?.roles || []).includes('admin') ||
       (user?.roles || []).includes('gm')
     );

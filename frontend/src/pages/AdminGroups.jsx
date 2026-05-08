@@ -151,7 +151,6 @@ export default function AdminGroups() {
                     <option value="player">player</option>
                     <option value="observer">observer</option>
                     <option value="gm">gm</option>
-                    <option value="admin">admin</option>
                   </select>
                 </div>
                 <Button onClick={() => addMember.mutate()} disabled={!selectedUserId}>Add</Button>

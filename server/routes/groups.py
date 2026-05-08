@@ -66,6 +66,10 @@ async def get_group(
     group = ctx.groups.get_group(group_id)
     if not group or not getattr(group, "is_active", True):
         raise HTTPException(status_code=404, detail="Group not found")
+    is_admin = "admin" in (user.roles or [])
+    is_member = user.id in (group.members or []) or group.owner_id == user.id
+    if not is_admin and not is_member:
+        raise HTTPException(status_code=403, detail="Access denied")
     return _to_response(group)
 
 
@@ -125,9 +129,20 @@ async def add_member(
     user = ctx.users.get_user(body.user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    role = (body.role or "").strip().lower()
+    if not role:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Group role is required",
+        )
+    if role == "admin":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Admin is an account type and cannot be assigned as a group role",
+        )
     if body.user_id not in group.members:
         group.members.append(body.user_id)
-    group.member_roles[body.user_id] = body.role
+    group.member_roles[body.user_id] = role
     if group_id not in (user.groups or []):
         user.groups.append(group_id)
         ctx.users.update_user(user)

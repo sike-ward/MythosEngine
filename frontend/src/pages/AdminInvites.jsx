@@ -1,29 +1,27 @@
-import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import SectionHeader from '@/components/SectionHeader';
 import Card from '@/components/Card';
 import Button from '@/components/Button';
-import Input from '@/components/Input';
+import Badge from '@/components/Badge';
 import { invites } from '@/api';
 
 export default function AdminInvites() {
   const qc = useQueryClient();
-  const [ttlDays, setTtlDays] = useState('7');
-  const [maxUses, setMaxUses] = useState('1');
   const { data: inviteList = [] } = useQuery({ queryKey: ['invites'], queryFn: invites.list });
 
   const generateInvite = useMutation({
-    mutationFn: () => invites.generate({ ttl_days: Number(ttlDays) || 7, max_uses: Number(maxUses) || 1 }),
-    onSuccess: () => {
+    mutationFn: () => invites.generate(),
+    onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['invites'] });
-      toast.success('Invite generated');
+      navigator.clipboard.writeText(data.code).catch(() => {});
+      toast.success(`Invite code copied to clipboard: ${data.code}`);
     },
     onError: (err) => toast.error(err.message),
   });
 
   const revokeInvite = useMutation({
-    mutationFn: invites.revoke,
+    mutationFn: (code) => invites.revoke(code),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['invites'] });
       toast.success('Invite revoked');
@@ -31,38 +29,76 @@ export default function AdminInvites() {
     onError: (err) => toast.error(err.message),
   });
 
+  const statusVariant = (status) => {
+    if (status === 'Active') return 'active';
+    if (status === 'Expired') return 'expired';
+    return 'disabled';
+  };
+
   return (
     <div className="p-10 space-y-6">
-      <SectionHeader title="🎟️ Admin Invites" subtitle="Manage invite codes, expiry, and usage limits." />
-      <Card className="p-6 space-y-4">
-        <div className="grid md:grid-cols-2 gap-4">
-          <Input label="TTL (days)" type="number" min="1" value={ttlDays} onChange={(e) => setTtlDays(e.target.value)} />
-          <Input label="Max uses" type="number" min="1" value={maxUses} onChange={(e) => setMaxUses(e.target.value)} />
-        </div>
-        <Button onClick={() => generateInvite.mutate()}>Generate invite</Button>
-      </Card>
+      <SectionHeader title="Invite Management" subtitle="Generate and manage invite codes for new users." />
+
+      <div className="flex items-center gap-3">
+        <Button onClick={() => generateInvite.mutate()} disabled={generateInvite.isPending}>
+          {generateInvite.isPending ? 'Generating...' : 'Generate Invite'}
+        </Button>
+      </div>
 
       <Card className="p-6">
-        <div className="space-y-3">
-          {inviteList.map((invite) => (
-            <div key={invite.id} className="flex items-center gap-3 bg-elevated rounded-xl px-4 py-3">
-              <code className="flex-1 text-sm text-txt">{invite.code}</code>
-              <span className="text-xs text-txt-muted">Expires {new Date(invite.expires_at).toLocaleString()}</span>
-              <span className="text-xs text-txt-muted">
-                {invite.use_count}/{invite.max_uses} uses
-              </span>
-              <span className="text-xs font-semibold text-txt">{invite.status}</span>
-              <Button variant="secondary" size="sm" onClick={() => navigator.clipboard.writeText(invite.code).then(() => toast.success('Copied'))}>
-                Copy
-              </Button>
-              {invite.is_active && invite.status === 'Active' && (
-                <Button variant="danger" size="sm" onClick={() => revokeInvite.mutate(invite.id)}>
-                  Revoke
-                </Button>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-txt-muted border-b border-border-subtle">
+                <th className="pb-3 pr-4 font-medium">Code</th>
+                <th className="pb-3 pr-4 font-medium">Created</th>
+                <th className="pb-3 pr-4 font-medium">Expires</th>
+                <th className="pb-3 pr-4 font-medium">Status</th>
+                <th className="pb-3 pr-4 font-medium">Used By</th>
+                <th className="pb-3 font-medium"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border-subtle">
+              {inviteList.map((invite) => (
+                <tr key={invite.id} className="text-txt">
+                  <td className="py-3 pr-4">
+                    <code className="font-mono text-accent text-xs bg-elevated px-2 py-1 rounded">
+                      {invite.code}
+                    </code>
+                  </td>
+                  <td className="py-3 pr-4 text-txt-muted">
+                    {new Date(invite.created_at).toLocaleDateString()}
+                  </td>
+                  <td className="py-3 pr-4 text-txt-muted">
+                    {new Date(invite.expires_at).toLocaleDateString()}
+                  </td>
+                  <td className="py-3 pr-4">
+                    <Badge label={invite.status} variant={statusVariant(invite.status)} />
+                  </td>
+                  <td className="py-3 pr-4 text-txt-muted">
+                    {invite.used_by ?? '—'}
+                  </td>
+                  <td className="py-3">
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      disabled={invite.is_used || !invite.is_active || revokeInvite.isPending}
+                      onClick={() => revokeInvite.mutate(invite.code)}
+                    >
+                      Revoke
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+              {!inviteList.length && (
+                <tr>
+                  <td colSpan={6} className="py-6 text-center text-txt-muted">
+                    No invites yet.
+                  </td>
+                </tr>
               )}
-            </div>
-          ))}
-          {!inviteList.length && <p className="text-sm text-txt-muted">No invites yet.</p>}
+            </tbody>
+          </table>
         </div>
       </Card>
     </div>

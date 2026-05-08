@@ -39,6 +39,24 @@ from server.realtime import hub
 from server.vault_access import resolve_vault
 
 router = APIRouter()
+_RESOURCE_PERMISSION_RANK = {"read": 1, "write": 2}
+
+
+def _normalize_resource_permissions(permissions: Optional[Dict[str, str]]) -> Dict[str, str]:
+    """
+    Keep resource-level permissions limited to read/write.
+    Legacy 'admin' resource roles are downgraded to 'write'.
+    """
+    normalized: Dict[str, str] = {}
+    for subject_id, permission in (permissions or {}).items():
+        if not subject_id:
+            continue
+        value = (permission or "").strip().lower()
+        if value == "admin":
+            value = "write"
+        if value in _RESOURCE_PERMISSION_RANK:
+            normalized[subject_id] = value
+    return normalized
 
 
 # ============================================================================
@@ -90,7 +108,7 @@ class CreateNoteRequest(BaseModel):
     folder_id: Optional[str] = Field(None, max_length=200)
     tags: List[str] = Field(default_factory=list, max_length=50)
     meta: Dict[str, str] = {}
-    vault_id: str = Field("default", max_length=100)
+    vault_id: Optional[str] = Field(default=None, max_length=100)
 
 
 class UpdateNoteRequest(BaseModel):
@@ -586,11 +604,27 @@ async def update_note(
         if req.meta is not None:
             note.meta = {**(getattr(note, "meta", {}) or {}), **req.meta}
         if req.permissions is not None:
-            note.permissions = req.permissions
+            note.permissions = _normalize_resource_permissions(req.permissions)
         if req.links is not None:
             note.links = req.links
         if req.group_id != "__UNSET__":
-            note.group_id = req.group_id
+            previous_group_id = getattr(note, "group_id", None)
+            next_group_id = req.group_id
+            note.permissions = dict(getattr(note, "permissions", {}) or {})
+            if next_group_id:
+                group = ctx.groups.get_group(next_group_id)
+                if not group or not getattr(group, "is_active", True):
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Group not found",
+                    )
+                note.permissions[next_group_id] = "write"
+            note.group_id = next_group_id
+            if (
+                previous_group_id
+                and previous_group_id != next_group_id
+            ):
+                note.permissions.pop(previous_group_id, None)
 
         ctx.notes.update_note(note, actor_id=user.id)
         await hub.publish_note_saved(note.vault_id, _note_to_detail(note).model_dump(mode="json"))

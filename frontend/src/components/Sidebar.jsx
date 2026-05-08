@@ -4,6 +4,7 @@ import {
   Sparkles,
   BookOpen,
   Scroll,
+  User,
   Users,
   Wand2,
   Globe,
@@ -11,7 +12,7 @@ import {
   Settings,
   LogOut,
   Shield,
-  Ticket,
+  Mail,
 } from 'lucide-react';
 import { useRealtime } from '@/context/RealtimeContext';
 
@@ -22,16 +23,16 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
     { icon: Home, label: 'Dashboard', path: '/' },
     { icon: Sparkles, label: 'AI', path: '/chat' },
     { icon: BookOpen, label: 'Browse', path: '/browse' },
-    { icon: Users, label: 'Characters', path: '/characters' },
+    { icon: User, label: 'Characters', path: '/characters' },
     { icon: Wand2, label: 'Create', path: '/create' },
     { icon: Scroll, label: 'Sessions', path: '/sessions' },
     { icon: Globe, label: 'Universe', path: '/universe' },
     { icon: Map, label: 'Maps', path: '/maps' },
-    { icon: Shield, label: 'Groups', path: '/groups' },
+    { icon: Users, label: 'Groups', path: '/groups' },
   ];
   const adminItems = [
     { icon: Shield, label: 'Groups', path: '/admin/groups' },
-    { icon: Ticket, label: 'Invites', path: '/admin/invites' },
+    { icon: Mail, label: 'Invites', path: '/invites' },
   ];
 
   return (
