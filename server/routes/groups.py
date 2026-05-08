@@ -19,11 +19,10 @@ class GroupResponse(BaseModel):
     description: Optional[str] = None
     owner_id: str
     members: List[str] = []
-    # Maps user IDs to their role names within the group (player/gm/etc.).
-    member_roles: dict[str, str] = {}
+    member_roles: Dict[str, str] = {}
     vault_ids: List[str] = []
-    is_active: bool
     permissions: Dict[str, bool] = {}
+    is_active: bool
 
 
 class CreateGroupRequest(BaseModel):
@@ -99,7 +98,7 @@ async def update_group(
     if body.description is not None:
         group.description = body.description
     if body.permissions is not None:
-        group.permissions = body.permissions
+        group.permissions = {**group.permissions, **body.permissions}
     ctx.groups.update_group(group)
     return _to_response(group)
 
