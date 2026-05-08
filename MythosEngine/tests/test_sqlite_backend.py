@@ -5,7 +5,7 @@ Runs the same operations as the HybridStorage tests but against
 SQLiteBackend to verify both backends are equivalent.
 """
 
-import pytest
+import sqlite3
 
 
 def make_sqlite_storage(tmp_path):
@@ -209,3 +209,42 @@ class TestSQLiteUpdateNoteMeta:
         storage.save_note(note)
         storage.update_note_metadata("note-meta-test", {"key": "value"})
         # No exception = pass; metadata merge is idempotent
+
+
+class TestSQLiteLegacySchemaCompatibility:
+    def test_legacy_notes_table_gets_missing_columns(self, tmp_path):
+        from MythosEngine.models.note import Note
+        from MythosEngine.storage.sqlite_backend import SQLiteBackend
+
+        db_path = tmp_path / "legacy.db"
+        vault_path = tmp_path / "vault"
+
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE notes (
+                    id TEXT PRIMARY KEY,
+                    owner_id TEXT NOT NULL DEFAULT '',
+                    vault_id TEXT NOT NULL DEFAULT '',
+                    data TEXT NOT NULL
+                )
+                """
+            )
+
+        storage = SQLiteBackend(db_path=str(db_path), vault_path=str(vault_path))
+
+        with sqlite3.connect(db_path) as conn:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(notes)").fetchall()}
+
+        assert {"created_at", "is_deleted", "folder", "title", "content", "tags"}.issubset(columns)
+
+        note = Note(
+            id="legacy-note-1",
+            owner_id=OWNER,
+            vault_id="default",
+            title="Legacy Compatibility",
+            content="content",
+        )
+        storage.save_note(note)
+        storage.set_user_context(OWNER)
+        assert storage.get_note_by_id("legacy-note-1") is not None

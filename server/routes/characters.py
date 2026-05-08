@@ -57,7 +57,7 @@ class CreateCharacterRequest(BaseModel):
     backstory: str = Field("", max_length=10_000)
     ai_memory: str = Field("", max_length=50_000)
     note_ids: List[str] = []
-    vault_id: str = Field("default", max_length=100)
+    vault_id: Optional[str] = Field(default=None, max_length=100)
 
 
 class UpdateCharacterRequest(BaseModel):
@@ -96,12 +96,20 @@ def _to_response(char: Character) -> CharacterResponse:
     )
 
 
+def _get_character_or_404(ctx: AppContext, user: User, char_id: str) -> Character:
+    char = ctx.storage.get_character_by_id(char_id)
+    if not char or getattr(char, "is_deleted", False):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Character not found")
+    resolve_vault(ctx, user, getattr(char, "vault_id", None))
+    return char
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 
 @router.get("/")
 async def list_characters(
-    vault_id: str = Query("default"),
+    vault_id: Optional[str] = Query(None),
     type: Optional[str] = Query(None, description="player or npc"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
@@ -127,10 +135,7 @@ async def get_character(
     user: User = Depends(get_current_user),
 ):
     """Get a single character by ID."""
-    char = ctx.storage.get_character_by_id(char_id)
-    if not char or getattr(char, "is_deleted", False):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Character not found")
-    return _to_response(char)
+    return _to_response(_get_character_or_404(ctx, user, char_id))
 
 
 @router.post("/", response_model=CharacterResponse)
@@ -169,9 +174,7 @@ async def update_character(
     user: User = Depends(get_current_user),
 ):
     """Partially update a character."""
-    char = ctx.storage.get_character_by_id(char_id)
-    if not char or getattr(char, "is_deleted", False):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Character not found")
+    char = _get_character_or_404(ctx, user, char_id)
 
     try:
         if req.name is not None:
@@ -211,8 +214,6 @@ async def delete_character(
     user: User = Depends(get_current_user),
 ):
     """Soft-delete a character."""
-    char = ctx.storage.get_character_by_id(char_id)
-    if not char or getattr(char, "is_deleted", False):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Character not found")
+    _get_character_or_404(ctx, user, char_id)
     ctx.storage.soft_delete_character(char_id)
     return {"deleted": True, "id": char_id}

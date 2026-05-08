@@ -24,9 +24,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-DEFAULT_VAULT_ID = "default"
-
-
 # ============================================================================
 # Request / Response models
 # ============================================================================
@@ -70,7 +67,7 @@ class MapDetail(BaseModel):
 
 class CreateMapRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
-    vault_id: str = Field(DEFAULT_VAULT_ID, max_length=100)
+    vault_id: Optional[str] = Field(default=None, max_length=100)
     map_type: str = Field("region", max_length=50)
     description: str = Field("", max_length=10_000)
     image_path: str = Field("", max_length=1000)
@@ -124,10 +121,11 @@ def _map_to_detail(m: Map) -> MapDetail:
     )
 
 
-def _get_map_or_404(ctx, map_id: str) -> Map:
+def _get_map_or_404(ctx, user: User, map_id: str) -> Map:
     m = ctx.maps.get_map(map_id)
     if not m or m.is_deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Map not found")
+    resolve_vault(ctx, user, getattr(m, "vault_id", None))
     return m
 
 
@@ -142,7 +140,7 @@ def _tags_str_to_list(tags: str) -> List[str]:
 
 @router.get("/")
 async def list_maps(
-    vault_id: str = Query(DEFAULT_VAULT_ID, description="Vault to list maps for"),
+    vault_id: Optional[str] = Query(None, description="Vault to list maps for"),
     type: Optional[str] = Query(None, description="Filter by map_type"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
@@ -174,7 +172,7 @@ async def get_map(
 ):
     """Get a map by ID."""
     try:
-        return _map_to_detail(_get_map_or_404(ctx, map_id))
+        return _map_to_detail(_get_map_or_404(ctx, user, map_id))
     except HTTPException:
         raise
     except Exception as e:
@@ -216,7 +214,7 @@ async def update_map(
 ):
     """Update an existing map."""
     try:
-        m = _get_map_or_404(ctx, map_id)
+        m = _get_map_or_404(ctx, user, map_id)
 
         is_admin = "admin" in (user.roles or [])
         if m.owner_id != user.id and not is_admin:
@@ -251,7 +249,7 @@ async def delete_map(
 ):
     """Soft-delete a map."""
     try:
-        m = _get_map_or_404(ctx, map_id)
+        m = _get_map_or_404(ctx, user, map_id)
 
         is_admin = "admin" in (user.roles or [])
         if m.owner_id != user.id and not is_admin:

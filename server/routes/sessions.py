@@ -49,6 +49,14 @@ class SessionLogUpdate(BaseModel):
     loot_notes: Optional[str] = None
 
 
+def _get_session_or_404(ctx: AppContext, user: User, session_id: str) -> dict:
+    session = ctx.storage.get_session_log(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    resolve_vault(ctx, user, session.get("vault_id"))
+    return session
+
+
 # ============================================================================
 # Endpoints
 # ============================================================================
@@ -73,10 +81,7 @@ async def get_session(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    session = ctx.storage.get_session_log(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return session
+    return _get_session_or_404(ctx, user, session_id)
 
 
 @router.post("", status_code=201)
@@ -99,8 +104,7 @@ async def update_session(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    if ctx.storage.get_session_log(session_id) is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+    _get_session_or_404(ctx, user, session_id)
     update = {k: v for k, v in body.model_dump().items() if v is not None}
     update["id"] = session_id
     ctx.storage.save_session_log(update)
@@ -113,8 +117,7 @@ async def delete_session(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    if ctx.storage.get_session_log(session_id) is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+    _get_session_or_404(ctx, user, session_id)
     ctx.storage.soft_delete_session_log(session_id)
     return None
 
@@ -125,9 +128,7 @@ async def generate_recap(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    session = ctx.storage.get_session_log(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = _get_session_or_404(ctx, user, session_id)
 
     if not ctx.has_ai():
         raise HTTPException(
