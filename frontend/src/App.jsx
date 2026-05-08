@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Routes, Route, useNavigate, useLocation } from "react-router-dom";
+import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import Sidebar from "./components/Sidebar";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -18,7 +18,6 @@ import NotFound from "./pages/NotFound";
 import Groups from "./pages/Groups";
 import AdminGroups from "./pages/AdminGroups";
 import AdminInvites from "./pages/AdminInvites";
-import Invites from "./pages/Invites";
 import { auth, setToken, getToken, vaults } from "./api";
 import { useSessionExpiry } from "./hooks/useSessionExpiry";
 import { VaultProvider } from "./context/VaultContext";
@@ -64,7 +63,7 @@ export default function App() {
             const data = await auth.me();
             setUser(data.user);
             if (location.pathname === "/admin/groups") {
-              navigate("/admin/invites", { replace: true });
+              navigate("/owner/invites", { replace: true });
             }
             // No exp for restored sessions — token expiry handled by server 401
           } catch {
@@ -180,9 +179,11 @@ export default function App() {
                 <Route path="/vaults" element={<Vaults />} />
                 <Route path="/settings" element={<Settings user={user} />} />
                 <Route path="/groups" element={<Groups user={user} />} />
-                {isAdmin && <Route path="/admin/groups" element={<AdminGroups />} />}
-                {isAdmin && <Route path="/admin/invites" element={<AdminInvites />} />}
-                {isAdmin && <Route path="/invites" element={<Invites user={user} />} />}
+                {isAdmin && <Route path="/owner/groups" element={<AdminGroups />} />}
+                {isAdmin && <Route path="/owner/invites" element={<AdminInvites />} />}
+                {isAdmin && <Route path="/admin/groups" element={<Navigate to="/owner/groups" replace />} />}
+                {isAdmin && <Route path="/admin/invites" element={<Navigate to="/owner/invites" replace />} />}
+                {isAdmin && <Route path="/invites" element={<Navigate to="/owner/invites" replace />} />}
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </ErrorBoundary>
