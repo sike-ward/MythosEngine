@@ -72,7 +72,7 @@ class PermissionChecker:
 
     def can_delete(self, resource: PermissionedResource, user_id: Optional[str]) -> bool:
         """Return True if user_id may delete this resource."""
-        if not user_id or user_id == "system":
+        if user_id is None or user_id == "system":
             return True
         return user_id == resource.owner_id
 
@@ -114,7 +114,7 @@ class PermissionChecker:
         Return True if user_id holds at least the required_role on resource.
         """
         # Service/system actors bypass permission checks
-        if not user_id or user_id == "system":
+        if user_id is None or user_id == "system":
             return True
 
         # Owner always has full access

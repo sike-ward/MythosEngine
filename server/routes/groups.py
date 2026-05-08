@@ -108,6 +108,11 @@ async def add_member(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     role = (body.role or "").strip().lower()
+    if not role:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Group role is required",
+        )
     if role == "admin":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -115,7 +120,7 @@ async def add_member(
         )
     if body.user_id not in group.members:
         group.members.append(body.user_id)
-    group.member_roles[body.user_id] = role or "player"
+    group.member_roles[body.user_id] = role
     if group_id not in (user.groups or []):
         user.groups.append(group_id)
         ctx.users.update_user(user)
