@@ -11,6 +11,7 @@ import Create from "./pages/Create";
 import Sessions from "./pages/Sessions";
 import Universe from "./pages/Universe";
 import Maps from "./pages/Maps";
+import Vaults from "./pages/Vaults";
 import Settings from "./pages/Settings";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
@@ -176,6 +177,7 @@ export default function App() {
                 <Route path="/sessions" element={<Sessions user={user} />} />
                 <Route path="/universe" element={<Universe />} />
                 <Route path="/maps" element={<Maps />} />
+                <Route path="/vaults" element={<Vaults />} />
                 <Route path="/settings" element={<Settings user={user} />} />
                 <Route path="/groups" element={<Groups user={user} />} />
                 {isAdmin && <Route path="/admin/groups" element={<AdminGroups />} />}

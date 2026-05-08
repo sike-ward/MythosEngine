@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
@@ -24,6 +25,7 @@ class VaultResponse(BaseModel):
     is_active: bool
     settings: Dict[str, str] = {}
     record_version: int = 1
+    created_at: Optional[datetime] = None
 
 
 class CreateVaultRequest(BaseModel):
@@ -49,6 +51,16 @@ async def list_vaults(
     user: User = Depends(get_current_user),
 ):
     return [_to_response(vault) for vault in list_accessible_vaults(ctx, user)]
+
+
+@router.get("/{vault_id}", response_model=VaultResponse)
+async def get_vault(
+    vault_id: str,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    vault = resolve_vault(ctx, user, vault_id)
+    return _to_response(vault)
 
 
 @router.post("/", response_model=VaultResponse, status_code=status.HTTP_201_CREATED)
