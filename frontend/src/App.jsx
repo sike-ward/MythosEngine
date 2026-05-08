@@ -16,8 +16,8 @@ import Settings from "./pages/Settings";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
 import Groups from "./pages/Groups";
-import AdminGroups from "./pages/AdminGroups";
-import AdminInvites from "./pages/AdminInvites";
+import OwnerGroups from "./pages/OwnerGroups";
+import OwnerInvites from "./pages/OwnerInvites";
 import { auth, setToken, getToken, vaults } from "./api";
 import { useSessionExpiry } from "./hooks/useSessionExpiry";
 import { VaultProvider } from "./context/VaultContext";
@@ -179,8 +179,8 @@ export default function App() {
                 <Route path="/vaults" element={<Vaults />} />
                 <Route path="/settings" element={<Settings user={user} />} />
                 <Route path="/groups" element={<Groups user={user} />} />
-                {isAdmin && <Route path="/owner/groups" element={<AdminGroups />} />}
-                {isAdmin && <Route path="/owner/invites" element={<AdminInvites />} />}
+                {isAdmin && <Route path="/owner/groups" element={<OwnerGroups />} />}
+                {isAdmin && <Route path="/owner/invites" element={<OwnerInvites />} />}
                 {isAdmin && <Route path="/admin/groups" element={<Navigate to="/owner/groups" replace />} />}
                 {isAdmin && <Route path="/admin/invites" element={<Navigate to="/owner/invites" replace />} />}
                 {isAdmin && <Route path="/invites" element={<Navigate to="/owner/invites" replace />} />}

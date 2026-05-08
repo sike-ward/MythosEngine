@@ -9,7 +9,7 @@ import { groups, users } from '@/api';
 
 const MIN_GROUP_NAME_LENGTH = 2;
 
-export default function AdminGroups() {
+export default function OwnerGroups() {
   const qc = useQueryClient();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
