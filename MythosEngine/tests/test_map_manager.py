@@ -47,5 +47,5 @@ def test_update_map_audits_updated_map_id():
     with patch("MythosEngine.managers.map_manager.audit") as mock_audit:
         mgr.update_map(created)
 
-    assert storage.saved[created.id].version >= 2
+    assert storage.saved[created.id].record_version >= 2
     mock_audit.assert_called_once_with("update", "map", created.id, user_id="user-1")
