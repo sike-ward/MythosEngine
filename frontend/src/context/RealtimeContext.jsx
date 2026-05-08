@@ -8,38 +8,67 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [editing, setEditing] = useState([]);
   const [lastEvent, setLastEvent] = useState(null);
+  const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
-    const token = getToken();
-    if (!user || !activeVaultId || !token) return undefined;
+    if (!user || !activeVaultId) return undefined;
 
-    const socket = new WebSocket(
-      `${getWsBase()}/ws?token=${encodeURIComponent(token)}&vault_id=${encodeURIComponent(activeVaultId)}`
-    );
-    socketRef.current = socket;
+    let cancelled = false;
+    let attempt = 0;
+    let timeoutId = null;
+    let currentSocket = null;
 
-    socket.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        setLastEvent(payload);
-        if (payload.type === 'presence.snapshot') {
-          setOnlineUsers(payload.users || []);
-          setEditing(payload.editing || []);
+    const connect = () => {
+      const token = getToken();
+      if (!token || cancelled) return;
+
+      const socket = new WebSocket(
+        `${getWsBase()}/ws?token=${encodeURIComponent(token)}&vault_id=${encodeURIComponent(activeVaultId)}`
+      );
+      currentSocket = socket;
+      socketRef.current = socket;
+
+      socket.onopen = () => {
+        attempt = 0;
+        setIsConnected(true);
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          setLastEvent(payload);
+          if (payload.type === 'presence.snapshot') {
+            setOnlineUsers(payload.users || []);
+            setEditing(payload.editing || []);
+          }
+        } catch (error) {
+          console.warn('Failed to parse realtime event', error);
         }
-      } catch (error) {
-        console.warn('Failed to parse realtime event', error);
-      }
+      };
+
+      socket.onclose = () => {
+        setIsConnected(false);
+        if (socketRef.current === socket) socketRef.current = null;
+        setOnlineUsers([]);
+        setEditing([]);
+        if (!cancelled && attempt < 5) {
+          const delay = Math.pow(2, attempt) * 1000;
+          attempt += 1;
+          timeoutId = setTimeout(connect, delay);
+        }
+      };
     };
 
-    socket.onclose = () => {
-      if (socketRef.current === socket) socketRef.current = null;
-    };
+    connect();
 
     return () => {
-      socket.close();
-      if (socketRef.current === socket) socketRef.current = null;
+      cancelled = true;
+      clearTimeout(timeoutId);
+      if (currentSocket) currentSocket.close();
+      if (socketRef.current === currentSocket) socketRef.current = null;
       setOnlineUsers([]);
       setEditing([]);
+      setIsConnected(false);
     };
   }, [user?.id, activeVaultId]);
 
@@ -55,11 +84,13 @@ export function RealtimeProvider({ user, activeVaultId, children }) {
       onlineUsers,
       editing,
       lastEvent,
+      isConnected,
       startEditing: (noteId, cursor = 0) => send({ type: 'editing.start', note_id: noteId, cursor }),
       updateCursor: (noteId, cursor = 0) => send({ type: 'cursor.move', note_id: noteId, cursor }),
       stopEditing: (noteId) => send({ type: 'editing.stop', note_id: noteId }),
+      sendMessage: (payload) => send(payload),
     }),
-    [onlineUsers, editing, lastEvent]
+    [onlineUsers, editing, lastEvent, isConnected]
   );
 
   return <RealtimeContext.Provider value={value}>{children}</RealtimeContext.Provider>;
