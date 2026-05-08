@@ -85,8 +85,8 @@ async def update_vault(
         group = ctx.groups.get_group(body.shared_group_id)
         if not group or not getattr(group, "is_active", True):
             raise HTTPException(status_code=404, detail="Group not found")
-        if body.shared_group_id not in vault.members:
-            vault.permissions[body.shared_group_id] = "write"
+        vault.permissions = dict(getattr(vault, "permissions", {}) or {})
+        vault.permissions[body.shared_group_id] = "write"
         if vault.id not in (group.vault_ids or []):
             group.vault_ids.append(vault.id)
             ctx.groups.update_group(group)
