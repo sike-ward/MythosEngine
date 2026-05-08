@@ -16,6 +16,7 @@ import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
 import AdminGroups from "./pages/AdminGroups";
 import AdminInvites from "./pages/AdminInvites";
+import Groups from "./pages/Groups";
 import { auth, setToken, getToken, vaults } from "./api";
 import { useSessionExpiry } from "./hooks/useSessionExpiry";
 import { VaultProvider } from "./context/VaultContext";
@@ -171,6 +172,7 @@ export default function App() {
                 <Route path="/sessions" element={<Sessions user={user} />} />
                 <Route path="/universe" element={<Universe />} />
                 <Route path="/maps" element={<Maps />} />
+                <Route path="/groups" element={<Groups user={user} />} />
                 <Route path="/settings" element={<Settings user={user} />} />
                 {isAdmin && <Route path="/admin/groups" element={<AdminGroups />} />}
                 {isAdmin && <Route path="/admin/invites" element={<AdminInvites />} />}

@@ -27,6 +27,7 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
     { icon: Scroll, label: 'Sessions', path: '/sessions' },
     { icon: Globe, label: 'Universe', path: '/universe' },
     { icon: Map, label: 'Maps', path: '/maps' },
+    { icon: Shield, label: 'Groups', path: '/groups' },
   ];
   const adminItems = [
     { icon: Shield, label: 'Groups', path: '/admin/groups' },

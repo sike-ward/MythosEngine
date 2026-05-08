@@ -34,4 +34,14 @@ class Group(CoreModel):
         default_factory=list,
         description="Vault IDs this group has access to.",
     )
+    permissions: Dict[str, bool] = Field(
+        default_factory=lambda: {
+            "can_read": True,
+            "can_write": False,
+            "can_delete": False,
+            "can_invite": False,
+            "can_admin": False,
+        },
+        description="Fine-grained permission flags for this group.",
+    )
     is_active: bool = Field(default=True, description="False to archive/dissolve the group.")
