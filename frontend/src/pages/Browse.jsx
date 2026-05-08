@@ -147,6 +147,10 @@ export default function Browse({ user }) {
 
   // ── Search (debounced) ───────────────────────────────────────────────────
   useEffect(() => {
+    if (!activeVaultId) {
+      setSearchResults(null);
+      return;
+    }
     if (!searchQuery.trim()) {
       setSearchResults(null);
       return;
@@ -497,7 +501,7 @@ export default function Browse({ user }) {
   // ════════════════════════════════════════════════════════════════════════
 
   return (
-    <div className="p-6 flex flex-col h-full gap-4">
+    <div className="p-6 flex flex-col h-full gap-4 min-w-0">
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <div className="flex justify-between items-start">
         <SectionHeader title="📖 Browse" subtitle="Explore and manage your vault." />
@@ -506,6 +510,14 @@ export default function Browse({ user }) {
           <Button variant="secondary" size="sm" onClick={() => setShowCreateFolder(true)} disabled={!activeVaultId}>+ Folder</Button>
         </div>
       </div>
+
+      {!activeVaultId && (
+        <Card className="p-4">
+          <p className="text-sm text-txt">
+            No project selected. Select a project in the sidebar, or create one in Settings → Campaign before browsing notes.
+          </p>
+        </Card>
+      )}
 
       {/* ── Create dialogs ─────────────────────────────────────────────── */}
       {showCreateNote && (
@@ -540,7 +552,8 @@ export default function Browse({ user }) {
       )}
 
       {/* ── Main layout (3-panel) ──────────────────────────────────────── */}
-      <div className="flex gap-4 flex-1 overflow-hidden min-h-0">
+      {activeVaultId && (
+        <div className="flex gap-4 flex-1 overflow-hidden min-h-0 min-w-0">
 
         {/* LEFT PANEL */}
         <FolderTree
@@ -686,7 +699,8 @@ export default function Browse({ user }) {
             </div>
           </Card>
         )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

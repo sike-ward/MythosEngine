@@ -34,7 +34,7 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
   ];
 
   return (
-    <div className="w-[250px] bg-surface h-full flex flex-col border-r border-border-subtle">
+    <div className="w-[250px] bg-surface h-full flex flex-col border-r border-border-subtle overflow-hidden">
       {/* Logo Section */}
       <div className="px-4 py-6 border-b border-border-subtle">
         <h2 className="text-lg font-bold text-txt flex items-center gap-2">
@@ -50,6 +50,7 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
             onChange={(e) => onVaultChange?.(e.target.value)}
             className="w-full bg-elevated rounded-lg px-3 py-2 text-sm text-txt border border-border-subtle focus:border-accent focus:outline-none"
           >
+            {!vaults.length && <option value="">No project selected</option>}
             {vaults.map((vault) => (
               <option key={vault.id} value={vault.id}>
                 {vault.name}
@@ -61,7 +62,7 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
       </div>
 
       {/* Navigation Section */}
-      <div className="px-4 py-4">
+      <div className="px-4 py-4 flex-1 overflow-y-auto min-h-0">
         <p className="uppercase text-[11px] tracking-widest text-txt-muted font-bold mb-3">
           Navigation
         </p>
@@ -118,9 +119,6 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
           </>
         )}
       </div>
-
-      {/* Spacer */}
-      <div className="flex-1" />
 
       {/* Bottom Section */}
       <div className="px-4 py-4 border-t border-border-subtle flex flex-col gap-2">
