@@ -501,7 +501,7 @@ export default function Browse({ user }) {
   // ════════════════════════════════════════════════════════════════════════
 
   return (
-    <div className="p-6 flex flex-col h-full gap-4">
+    <div className="p-6 flex flex-col h-full gap-4 min-w-0">
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <div className="flex justify-between items-start">
         <SectionHeader title="📖 Browse" subtitle="Explore and manage your vault." />
