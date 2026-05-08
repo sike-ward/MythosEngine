@@ -38,7 +38,7 @@ class Note(CoreModel):
     )
     permissions: Dict[str, str] = Field(
         default_factory=dict,
-        description="Per-user or per-group permission overrides. Keys are IDs, values are roles (read/write/admin).",
+        description="Per-user or per-group permission overrides. Keys are IDs, values are roles (read/write).",
     )
     links: List[str] = Field(
         default_factory=list,

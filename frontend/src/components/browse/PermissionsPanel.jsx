@@ -59,7 +59,7 @@ export default function PermissionsPanel({
             {Object.entries(selectedNote.permissions).map(([entityId, entityRole]) => (
               <div key={entityId} className="flex justify-between text-xs">
                 <span className="text-txt truncate">{getDisplayName(entityId)}</span>
-                <Badge label={entityRole} variant={entityRole === 'admin' ? 'admin' : 'player'} />
+                <Badge label={entityRole} variant={entityRole === 'write' ? 'active' : 'player'} />
               </div>
             ))}
           </div>
@@ -90,7 +90,6 @@ export default function PermissionsPanel({
               >
                 <option value="read">read</option>
                 <option value="write">write</option>
-                <option value="admin">admin</option>
               </select>
               <Button size="sm" onClick={() => onSetPermission?.(subjectId, role)} disabled={!subjectId}>Share</Button>
             </div>

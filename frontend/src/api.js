@@ -211,8 +211,9 @@ export const users = {
 // ── Invites (admin) ──────────────────────────────────────────────────────────
 export const invites = {
   list: () => request("GET", "/invites"),
-  generate: ({ ttl_days = 7, max_uses = 1 } = {}) => request("POST", "/invites", { ttl_days, max_uses }),
-  revoke: (id) => request("DELETE", `/invites/${id}`),
+  generate: (expiresHours = null) =>
+    request("POST", "/invites/generate", { expires_hours: expiresHours }),
+  revoke: (code) => request("DELETE", `/invites/${encodeURIComponent(code)}`),
 };
 
 export const vaults = {
@@ -270,8 +271,9 @@ export const sessions = {
 
 // ── Characters ────────────────────────────────────────────────────────────────
 export const characters = {
-  list: (vaultId = "default", type = null) => {
-    const params = new URLSearchParams({ vault_id: vaultId });
+  list: (vaultId = "", type = null) => {
+    const params = new URLSearchParams();
+    if (vaultId) params.set("vault_id", vaultId);
     if (type) params.set("type", type);
     return request("GET", `/characters?${params}`);
   },
@@ -283,8 +285,9 @@ export const characters = {
 
 // ── Maps ─────────────────────────────────────────────────────────────────────
 export const maps = {
-  list: (vault_id = "default", type = null) => {
-    const params = new URLSearchParams({ vault_id });
+  list: (vault_id = "", type = null) => {
+    const params = new URLSearchParams();
+    if (vault_id) params.set("vault_id", vault_id);
     if (type) params.set("type", type);
     return request("GET", `/maps?${params.toString()}`);
   },
