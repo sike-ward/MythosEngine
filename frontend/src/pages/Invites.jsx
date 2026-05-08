@@ -12,7 +12,7 @@ export default function Invites({ user }) {
   if (!isAdmin) {
     return (
       <div className="p-10">
-        <p className="text-txt-muted">Admin access required.</p>
+        <p className="text-txt-muted">Owner access required.</p>
       </div>
     );
   }

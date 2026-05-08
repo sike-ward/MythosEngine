@@ -33,9 +33,9 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
     { icon: Map, label: 'Maps', path: '/maps' },
     { icon: Users, label: 'Groups', path: '/groups' },
   ];
-  const adminItems = [
-    { icon: Shield, label: 'Groups', path: '/admin/groups' },
-    { icon: Mail, label: 'Invites', path: '/invites' },
+  const ownerItems = [
+    { icon: Shield, label: 'Groups', path: '/owner/groups' },
+    { icon: Mail, label: 'Invites', path: '/owner/invites' },
   ];
 
   return (
@@ -126,10 +126,10 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
         {isAdmin && (
           <>
             <p className="uppercase text-[11px] tracking-widest text-txt-muted font-bold mt-6 mb-3">
-              Admin
+              Owner
             </p>
             <nav className="flex flex-col gap-2">
-              {adminItems.map((item) => {
+              {ownerItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = currentPath === item.path;
 

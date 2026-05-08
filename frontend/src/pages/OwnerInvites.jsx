@@ -6,7 +6,7 @@ import Button from '@/components/Button';
 import Badge from '@/components/Badge';
 import { invites } from '@/api';
 
-export default function AdminInvites() {
+export default function OwnerInvites() {
   const qc = useQueryClient();
   const { data: inviteList = [] } = useQuery({ queryKey: ['invites'], queryFn: invites.list });
 
