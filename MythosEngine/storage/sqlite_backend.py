@@ -317,10 +317,19 @@ class SQLiteBackend(StorageBackend):
 
     def _setup_fts(self, conn) -> None:
         """Create the FTS5 virtual table and sync triggers on the raw SQLite connection."""
-        # Add denormalized columns to notes if they're missing (existing DBs pre-FTS).
-        for col, default in (("title", "''"), ("content", "''"), ("tags", "''")):
+        # Add missing notes columns for legacy databases.
+        # This makes startup resilient when an older DB predates Alembic or
+        # when migration stamping skipped table-alter migrations.
+        for col, ddl in (
+            ("created_at", "DATETIME"),
+            ("is_deleted", "INTEGER NOT NULL DEFAULT 0"),
+            ("folder", "TEXT DEFAULT ''"),
+            ("title", "TEXT DEFAULT ''"),
+            ("content", "TEXT DEFAULT ''"),
+            ("tags", "TEXT DEFAULT ''"),
+        ):
             try:
-                conn.execute(f"ALTER TABLE notes ADD COLUMN {col} TEXT DEFAULT {default}")
+                conn.execute(f"ALTER TABLE notes ADD COLUMN {col} {ddl}")
             except Exception:
                 pass  # column already exists
 
