@@ -605,7 +605,6 @@ async def update_note(
             if (
                 previous_group_id
                 and previous_group_id != next_group_id
-                and previous_group_id in note.permissions
             ):
                 note.permissions.pop(previous_group_id, None)
 

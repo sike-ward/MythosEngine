@@ -180,7 +180,13 @@ export default function CampaignSettings({ vaultPath, setVaultPath, campaignApiK
                   ))}
                 </select>
               </div>
-              <Button variant="secondary" onClick={shareVaultWithGroup} disabled={!activeVaultId || !sharedGroupId}>
+              <Button
+                variant="secondary"
+                onClick={shareVaultWithGroup}
+                disabled={!activeVaultId || !sharedGroupId}
+                title={!activeVaultId ? 'Select an active vault first' : (!sharedGroupId ? 'Select a group first' : '')}
+                aria-label="Share active vault with selected group"
+              >
                 Share with group
               </Button>
             </div>
