@@ -39,6 +39,24 @@ from server.realtime import hub
 from server.vault_access import resolve_vault
 
 router = APIRouter()
+_RESOURCE_PERMISSION_RANK = {"read": 1, "write": 2}
+
+
+def _normalize_resource_permissions(permissions: Dict[str, str]) -> Dict[str, str]:
+    """
+    Keep resource-level permissions limited to read/write.
+    Legacy 'admin' resource roles are downgraded to 'write'.
+    """
+    normalized: Dict[str, str] = {}
+    for subject_id, permission in (permissions or {}).items():
+        if not subject_id:
+            continue
+        value = (permission or "").strip().lower()
+        if value == "admin":
+            value = "write"
+        if value in _RESOURCE_PERMISSION_RANK:
+            normalized[subject_id] = value
+    return normalized
 
 
 # ============================================================================
@@ -586,7 +604,7 @@ async def update_note(
         if req.meta is not None:
             note.meta = {**(getattr(note, "meta", {}) or {}), **req.meta}
         if req.permissions is not None:
-            note.permissions = req.permissions
+            note.permissions = _normalize_resource_permissions(req.permissions)
         if req.links is not None:
             note.links = req.links
         if req.group_id != "__UNSET__":

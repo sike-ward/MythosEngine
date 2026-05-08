@@ -19,7 +19,7 @@ class GroupResponse(BaseModel):
     description: Optional[str] = None
     owner_id: str
     members: List[str] = []
-    # Maps user IDs to their role names within the group (player/gm/admin/etc.).
+    # Maps user IDs to their role names within the group (player/gm/etc.).
     member_roles: dict[str, str] = {}
     vault_ids: List[str] = []
     is_active: bool
@@ -107,9 +107,15 @@ async def add_member(
     user = ctx.users.get_user(body.user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    role = (body.role or "").strip().lower()
+    if role == "admin":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Admin is an account type and cannot be assigned as a group role",
+        )
     if body.user_id not in group.members:
         group.members.append(body.user_id)
-    group.member_roles[body.user_id] = body.role
+    group.member_roles[body.user_id] = role or "player"
     if group_id not in (user.groups or []):
         user.groups.append(group_id)
         ctx.users.update_user(user)

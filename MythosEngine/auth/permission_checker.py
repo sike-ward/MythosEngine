@@ -4,7 +4,7 @@ PermissionChecker — basic ACL enforcement for MythosEngine.
 Every resource (Note, Vault, Character, etc.) carries:
   - owner_id  : the user who created it — always has full access
   - permissions : dict mapping user_id or group_id -> role string
-                  roles: "read", "write", "admin"
+                  roles: "read", "write"
 
 This checker is the single place that decides if a user can perform
 an action on a resource. Wire it into managers before any CRUD call.
@@ -13,7 +13,7 @@ Multiuser expansion path:
   - Add group membership lookup (check if user_id is in any group
     that has permissions on the resource)
   - Add vault-level default permissions (inherited by all child resources)
-  - Add role hierarchy (admin > write > read)
+  - Add richer role hierarchy beyond read/write
 """
 
 from typing import Optional, Protocol, runtime_checkable
@@ -26,7 +26,7 @@ from typing import Optional, Protocol, runtime_checkable
 @runtime_checkable
 class PermissionedResource(Protocol):
     owner_id: str
-    permissions: dict  # {user_id_or_group_id: "read" | "write" | "admin"}
+    permissions: dict  # {user_id_or_group_id: "read" | "write"}
 
 
 # ---------------------------------------------------------------------------
@@ -35,9 +35,7 @@ class PermissionedResource(Protocol):
 
 ROLE_READ = "read"
 ROLE_WRITE = "write"
-ROLE_ADMIN = "admin"
-
-_ROLE_RANK = {ROLE_READ: 1, ROLE_WRITE: 2, ROLE_ADMIN: 3}
+_ROLE_RANK = {ROLE_READ: 1, ROLE_WRITE: 2}
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +72,9 @@ class PermissionChecker:
 
     def can_delete(self, resource: PermissionedResource, user_id: Optional[str]) -> bool:
         """Return True if user_id may delete this resource."""
-        return self._has_role(resource, user_id, ROLE_ADMIN)
+        if not user_id or user_id == "system":
+            return True
+        return user_id == resource.owner_id
 
     def require_read(self, resource: PermissionedResource, user_id: Optional[str]) -> None:
         """Raise PermissionError if user_id cannot read resource."""
