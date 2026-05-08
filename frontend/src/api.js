@@ -211,8 +211,9 @@ export const users = {
 // ── Invites (admin) ──────────────────────────────────────────────────────────
 export const invites = {
   list: () => request("GET", "/invites"),
-  generate: ({ ttl_days = 7, max_uses = 1 } = {}) => request("POST", "/invites", { ttl_days, max_uses }),
-  revoke: (id) => request("DELETE", `/invites/${id}`),
+  generate: (expiresHours = null) =>
+    request("POST", "/invites/generate", { expires_hours: expiresHours }),
+  revoke: (code) => request("DELETE", `/invites/${encodeURIComponent(code)}`),
 };
 
 export const vaults = {
