@@ -16,7 +16,7 @@ import {
 import { useRealtime } from '@/context/RealtimeContext';
 
 const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeVaultId, onVaultChange }) => {
-  const { onlineUsers } = useRealtime();
+  const { onlineUsers, isConnected } = useRealtime();
   const isAdmin = user?.roles?.includes?.('admin');
   const navItems = [
     { icon: Home, label: 'Dashboard', path: '/' },
@@ -57,7 +57,27 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
               </option>
             ))}
           </select>
-          <p className="text-xs text-txt-muted">{onlineUsers.length} online player{onlineUsers.length === 1 ? '' : 's'}</p>
+          <div className="flex items-center gap-1.5 mt-1">
+            <span
+              className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${isConnected ? 'bg-green-500' : 'bg-gray-400'}`}
+              title={isConnected ? 'Connected' : 'Reconnecting…'}
+            />
+            <span className="text-xs text-txt-muted">
+              {isConnected ? `${onlineUsers.length} online` : 'Reconnecting…'}
+            </span>
+          </div>
+          {isConnected && onlineUsers.length > 0 && (
+            <div className="mt-2 space-y-1">
+              {onlineUsers.map((u) => (
+                <div key={u.id} className="flex items-center gap-1.5">
+                  <span className="inline-block w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
+                  <span className="text-xs text-txt-muted truncate" title={u.email || u.username}>
+                    {u.email || u.username}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

@@ -26,6 +26,7 @@ export default function FolderTree({
   searchHistory = [],
   onHistorySelect,
   onClearHistory,
+  editingMap = {},
 }) {
   const [historyOpen, setHistoryOpen] = useState(false);
 
@@ -103,6 +104,7 @@ export default function FolderTree({
               notes={searchResults}
               selectedNoteId={selectedNoteId}
               onNoteSelect={onNoteSelect}
+              editingMap={editingMap}
             />
           </div>
         ) : (
@@ -160,6 +162,7 @@ export default function FolderTree({
                             notes={folderNotes}
                             selectedNoteId={selectedNoteId}
                             onNoteSelect={onNoteSelect}
+                            editingMap={editingMap}
                           />
                         </div>
                       )}
@@ -188,6 +191,7 @@ export default function FolderTree({
                           notes={unfiledNotes}
                           selectedNoteId={selectedNoteId}
                           onNoteSelect={onNoteSelect}
+                          editingMap={editingMap}
                         />
                       </div>
                     )}

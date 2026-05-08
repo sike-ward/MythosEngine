@@ -18,11 +18,11 @@ class RealtimeHub:
     def _is_connected(websocket: WebSocket) -> bool:
         return getattr(getattr(websocket, "client_state", None), "name", "") == "CONNECTED"
 
-    async def connect(self, vault_id: str, user_id: str, username: str, websocket: WebSocket) -> None:
+    async def connect(self, vault_id: str, user_id: str, username: str, email: str, websocket: WebSocket) -> None:
         await websocket.accept()
         async with self._lock:
             self._connections[vault_id].add(websocket)
-            self._online_users[vault_id][user_id] = {"id": user_id, "username": username}
+            self._online_users[vault_id][user_id] = {"id": user_id, "username": username, "email": email}
         await self.broadcast_presence(vault_id)
 
     async def disconnect(self, vault_id: str, user_id: str, websocket: WebSocket) -> None:
@@ -67,6 +67,7 @@ class RealtimeHub:
         note_id: str,
         user_id: str,
         username: str,
+        email: str = "",
         cursor: int | None = None,
         active: bool = True,
     ) -> None:
@@ -76,6 +77,7 @@ class RealtimeHub:
                     "note_id": note_id,
                     "user_id": user_id,
                     "username": username,
+                    "email": email,
                     "cursor": cursor,
                 }
             else:
