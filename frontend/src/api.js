@@ -245,6 +245,7 @@ export const vaults = {
 
 export const groups = {
   list: () => request("GET", "/groups"),
+  get: (id) => request("GET", `/groups/${encodeURIComponent(id)}`),
   create: (data) => request("POST", "/groups", data),
   update: (id, data) => request("PUT", `/groups/${encodeURIComponent(id)}`, data),
   remove: (id) => request("DELETE", `/groups/${encodeURIComponent(id)}`),

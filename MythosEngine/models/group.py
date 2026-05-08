@@ -14,6 +14,14 @@ from pydantic import Field
 
 from MythosEngine.models.base import CoreModel
 
+_DEFAULT_PERMISSIONS = {
+    "can_read": True,
+    "can_write": False,
+    "can_delete": False,
+    "can_invite": False,
+    "can_admin": False,
+}
+
 
 class Group(CoreModel):
     """
@@ -35,3 +43,7 @@ class Group(CoreModel):
         description="Vault IDs this group has access to.",
     )
     is_active: bool = Field(default=True, description="False to archive/dissolve the group.")
+    permissions: Dict[str, bool] = Field(
+        default_factory=lambda: dict(_DEFAULT_PERMISSIONS),
+        description="Group-level permission flags (can_read, can_write, can_delete, can_invite, can_admin).",
+    )
