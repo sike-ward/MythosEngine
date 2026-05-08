@@ -320,16 +320,16 @@ class SQLiteBackend(StorageBackend):
         # Add missing notes columns for legacy databases.
         # This makes startup resilient when an older DB predates Alembic or
         # when migration stamping skipped table-alter migrations.
-        for col, ddl in (
-            ("created_at", "DATETIME"),
-            ("is_deleted", "INTEGER NOT NULL DEFAULT 0"),
-            ("folder", "TEXT DEFAULT ''"),
-            ("title", "TEXT DEFAULT ''"),
-            ("content", "TEXT DEFAULT ''"),
-            ("tags", "TEXT DEFAULT ''"),
+        for statement in (
+            "ALTER TABLE notes ADD COLUMN created_at DATETIME",
+            "ALTER TABLE notes ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE notes ADD COLUMN folder TEXT DEFAULT ''",
+            "ALTER TABLE notes ADD COLUMN title TEXT DEFAULT ''",
+            "ALTER TABLE notes ADD COLUMN content TEXT DEFAULT ''",
+            "ALTER TABLE notes ADD COLUMN tags TEXT DEFAULT ''",
         ):
             try:
-                conn.execute(f"ALTER TABLE notes ADD COLUMN {col} {ddl}")
+                conn.execute(statement)
             except Exception:
                 pass  # column already exists
 
