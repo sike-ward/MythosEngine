@@ -241,9 +241,10 @@ class TestSQLiteLegacySchemaCompatibility:
         note = Note(
             id="legacy-note-1",
             owner_id=OWNER,
-            vault_id=VAULT,
+            vault_id="default",
             title="Legacy Compatibility",
             content="content",
         )
         storage.save_note(note)
+        storage.set_user_context(OWNER)
         assert storage.get_note_by_id("legacy-note-1") is not None
