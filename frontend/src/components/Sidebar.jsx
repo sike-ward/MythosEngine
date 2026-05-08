@@ -10,7 +10,6 @@ import {
   Map,
   Settings,
   LogOut,
-  Shield,
   Ticket,
 } from 'lucide-react';
 import { useRealtime } from '@/context/RealtimeContext';
@@ -29,7 +28,6 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
     { icon: Map, label: 'Maps', path: '/maps' },
   ];
   const adminItems = [
-    { icon: Shield, label: 'Groups', path: '/admin/groups' },
     { icon: Ticket, label: 'Invites', path: '/admin/invites' },
   ];
 

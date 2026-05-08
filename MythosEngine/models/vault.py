@@ -33,7 +33,7 @@ class Vault(CoreModel):
     )
     permissions: Dict[str, str] = Field(
         default_factory=dict,
-        description="Per-user/group permission overrides (read/write/admin).",
+        description="Per-user/group permission overrides (read/write).",
     )
     is_active: bool = Field(default=True, description="False to archive/disable this vault.")
     settings: Dict[str, str] = Field(

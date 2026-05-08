@@ -14,7 +14,6 @@ import Maps from "./pages/Maps";
 import Settings from "./pages/Settings";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
-import AdminGroups from "./pages/AdminGroups";
 import AdminInvites from "./pages/AdminInvites";
 import { auth, setToken, getToken, vaults } from "./api";
 import { useSessionExpiry } from "./hooks/useSessionExpiry";
@@ -60,6 +59,9 @@ export default function App() {
           try {
             const data = await auth.me();
             setUser(data.user);
+            if (location.pathname === "/admin/groups") {
+              navigate("/admin/invites", { replace: true });
+            }
             // No exp for restored sessions — token expiry handled by server 401
           } catch {
             setToken(null);
@@ -172,7 +174,6 @@ export default function App() {
                 <Route path="/universe" element={<Universe />} />
                 <Route path="/maps" element={<Maps />} />
                 <Route path="/settings" element={<Settings user={user} />} />
-                {isAdmin && <Route path="/admin/groups" element={<AdminGroups />} />}
                 {isAdmin && <Route path="/admin/invites" element={<AdminInvites />} />}
                 <Route path="*" element={<NotFound />} />
               </Routes>
