@@ -180,7 +180,7 @@ export default function CampaignSettings({ vaultPath, setVaultPath, campaignApiK
                   ))}
                 </select>
               </div>
-              <Button variant="secondary" onClick={shareVaultWithGroup} disabled={!sharedGroupId}>
+              <Button variant="secondary" onClick={shareVaultWithGroup} disabled={!activeVaultId || !sharedGroupId}>
                 Share with group
               </Button>
             </div>

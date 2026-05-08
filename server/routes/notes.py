@@ -592,6 +592,7 @@ async def update_note(
         if req.group_id != "__UNSET__":
             previous_group_id = getattr(note, "group_id", None)
             next_group_id = req.group_id
+            note.permissions = dict(getattr(note, "permissions", {}) or {})
             if next_group_id:
                 group = ctx.groups.get_group(next_group_id)
                 if not group or not getattr(group, "is_active", True):
@@ -599,15 +600,13 @@ async def update_note(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="Group not found",
                     )
-                note.permissions = dict(getattr(note, "permissions", {}) or {})
-                note.permissions.setdefault(next_group_id, "write")
+                note.permissions[next_group_id] = "write"
             note.group_id = next_group_id
             if (
                 previous_group_id
                 and previous_group_id != next_group_id
-                and previous_group_id in (getattr(note, "permissions", {}) or {})
+                and previous_group_id in note.permissions
             ):
-                note.permissions = dict(getattr(note, "permissions", {}) or {})
                 note.permissions.pop(previous_group_id, None)
 
         ctx.notes.update_note(note, actor_id=user.id)
