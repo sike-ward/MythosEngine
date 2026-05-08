@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import Button from '@/components/Button';
 import Input from '@/components/Input';
-import { vaults } from '@/api';
+import { groups, vaults } from '@/api';
 import { useVault } from '@/context/VaultContext';
 
 export default function CampaignSettings({ vaultPath, setVaultPath, campaignApiKey, setCampaignApiKey, onSave }) {
@@ -13,11 +13,15 @@ export default function CampaignSettings({ vaultPath, setVaultPath, campaignApiK
   const [newVaultName, setNewVaultName] = useState('');
   const [activeVaultName, setActiveVaultName] = useState(activeVault?.name || '');
   const [backupCron, setBackupCron] = useState(activeVault?.settings?.backup_cron || '0 0 * * *');
+  const [sharedGroupId, setSharedGroupId] = useState('');
+  const { data: groupList = [] } = useQuery({ queryKey: ['groups'], queryFn: groups.list });
 
   useEffect(() => {
     setActiveVaultName(activeVault?.name || '');
     setBackupCron(activeVault?.settings?.backup_cron || '0 0 * * *');
-  }, [activeVault]);
+    const matchedGroup = groupList.find((group) => (activeVault?.permissions || {})[group.id]);
+    setSharedGroupId(matchedGroup?.id || '');
+  }, [activeVault, groupList]);
 
   const refreshVaults = () => qc.invalidateQueries({ queryKey: ['vaults'] });
 
@@ -81,6 +85,17 @@ export default function CampaignSettings({ vaultPath, setVaultPath, campaignApiK
       await vaults.updateBackup(activeVaultId, backupCron);
       refreshVaults();
       toast.success('Backup schedule saved');
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
+  const shareVaultWithGroup = async () => {
+    if (!activeVaultId || !sharedGroupId) return;
+    try {
+      await vaults.update(activeVaultId, { shared_group_id: sharedGroupId });
+      refreshVaults();
+      toast.success('Vault shared with group');
     } catch (err) {
       toast.error(err.message);
     }
@@ -151,6 +166,30 @@ export default function CampaignSettings({ vaultPath, setVaultPath, campaignApiK
               onChange={(e) => setBackupCron(e.target.value)}
               placeholder="0 0 * * *"
             />
+            <div className="grid md:grid-cols-[1fr,220px] gap-3 items-end">
+              <div>
+                <label className="block text-txt-muted text-sm mb-2 font-medium">Shared group</label>
+                <select
+                  value={sharedGroupId}
+                  onChange={(e) => setSharedGroupId(e.target.value)}
+                  className="w-full bg-surface rounded-xl px-4 py-3 text-txt border-2 border-transparent focus:border-accent focus:outline-none transition"
+                >
+                  <option value="">None</option>
+                  {groupList.map((group) => (
+                    <option key={group.id} value={group.id}>{group.name}</option>
+                  ))}
+                </select>
+              </div>
+              <Button
+                variant="secondary"
+                onClick={shareVaultWithGroup}
+                disabled={!activeVaultId || !sharedGroupId}
+                title={!activeVaultId ? 'Select an active vault first' : (!sharedGroupId ? 'Select a group first' : '')}
+                aria-label="Share active vault with selected group"
+              >
+                Share with group
+              </Button>
+            </div>
             <div className="flex flex-wrap gap-2">
               <Button variant="secondary" onClick={() => updateVault.mutate({ name: activeVaultName })}>Rename vault</Button>
               <Button variant="secondary" onClick={saveBackupSchedule}>Save backup schedule</Button>

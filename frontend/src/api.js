@@ -270,8 +270,9 @@ export const sessions = {
 
 // ── Characters ────────────────────────────────────────────────────────────────
 export const characters = {
-  list: (vaultId = "default", type = null) => {
-    const params = new URLSearchParams({ vault_id: vaultId });
+  list: (vaultId = "", type = null) => {
+    const params = new URLSearchParams();
+    if (vaultId) params.set("vault_id", vaultId);
     if (type) params.set("type", type);
     return request("GET", `/characters?${params}`);
   },
@@ -283,8 +284,9 @@ export const characters = {
 
 // ── Maps ─────────────────────────────────────────────────────────────────────
 export const maps = {
-  list: (vault_id = "default", type = null) => {
-    const params = new URLSearchParams({ vault_id });
+  list: (vault_id = "", type = null) => {
+    const params = new URLSearchParams();
+    if (vault_id) params.set("vault_id", vault_id);
     if (type) params.set("type", type);
     return request("GET", `/maps?${params.toString()}`);
   },

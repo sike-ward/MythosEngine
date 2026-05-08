@@ -93,6 +93,20 @@ def _list_all_users(ctx: AppContext) -> List[User]:
     return users
 
 
+def _get_creator_user(ctx: AppContext) -> Optional[User]:
+    """Return the original creator account (earliest created user)."""
+    users = _list_all_users(ctx)
+    if not users:
+        return None
+    eligible_users = [u for u in users if getattr(u, "id", None)]
+    if not eligible_users:
+        return None
+    users_with_created_at = [u for u in eligible_users if getattr(u, "created_at", None) is not None]
+    if users_with_created_at:
+        return min(users_with_created_at, key=lambda u: (u.created_at, u.id))
+    return min(eligible_users, key=lambda u: u.id)
+
+
 # ============================================================================
 # User management endpoints
 # ============================================================================
@@ -169,7 +183,30 @@ async def update_user_roles(
                 detail="User not found",
             )
 
-        user.roles = req.roles
+        normalized_roles = []
+        for role in req.roles or []:
+            value = (role or "").strip().lower()
+            if value and value not in normalized_roles:
+                normalized_roles.append(value)
+
+        if not normalized_roles:
+            normalized_roles = ["player"]
+
+        creator = _get_creator_user(ctx)
+        creator_id = creator.id if creator else None
+
+        if "admin" in normalized_roles and user.id != creator_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Admin is reserved for the creator account and cannot be assigned to non-creator accounts",
+            )
+        if user.id == creator_id and "admin" not in normalized_roles:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Creator account must retain admin role",
+            )
+
+        user.roles = normalized_roles
         ctx.users.update_user(user)
         return {"message": "Roles updated successfully", "user_id": user.id}
     except HTTPException:

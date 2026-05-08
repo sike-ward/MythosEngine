@@ -19,7 +19,7 @@ const EMPTY_FORM = {
   backstory: '',
   ai_memory: '',
   note_ids: [],
-  vault_id: 'default',
+  vault_id: '',
 };
 
 function statModifier(value) {
