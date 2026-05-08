@@ -60,6 +60,9 @@ export default function App() {
           try {
             const data = await auth.me();
             setUser(data.user);
+            if (location.pathname === "/admin/groups") {
+              navigate("/", { replace: true });
+            }
             // No exp for restored sessions — token expiry handled by server 401
           } catch {
             setToken(null);
