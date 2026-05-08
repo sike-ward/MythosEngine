@@ -74,15 +74,6 @@ export default function AdminSettings() {
     onError: () => toast.error('Failed to reset password'),
   });
 
-  const updateRoleMutation = useMutation({
-    mutationFn: ({ id, roles }) => users.updateRole(id, roles),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['users'] });
-      toast.success('Role updated');
-    },
-    onError: () => toast.error('Failed to update role'),
-  });
-
   const handleCopyInvite = (code) => {
     navigator.clipboard.writeText(code)
       .then(() => toast.success('Copied to clipboard!'))
@@ -112,15 +103,6 @@ export default function AdminSettings() {
   const adminCount = usersList.filter((u) => hasAdminRole(u)).length;
   const activeUserCount = usersList.filter((u) => u.is_active !== false).length;
   const activeInvites = invitesList.filter(isInviteActive).length;
-
-  const handleRoleToggle = (u) => {
-    const currentRoles = normalizeRoles(u);
-    const nextRoles = hasAdminRole(u)
-      ? currentRoles.filter((r) => r !== ROLE_ADMIN)
-      : [...currentRoles, ROLE_ADMIN];
-    if (nextRoles.length === 0) nextRoles.push(ROLE_PLAYER);
-    updateRoleMutation.mutate({ id: u.id, roles: nextRoles });
-  };
 
   return (
     <div className="space-y-6">
@@ -252,14 +234,6 @@ export default function AdminSettings() {
                       />
                     </td>
                     <td className="py-3 px-4 space-x-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={updateRoleMutation.isPending}
-                        onClick={() => handleRoleToggle(u)}
-                      >
-                        {getUserRole(u) === ROLE_ADMIN ? 'Make Player' : 'Make Admin'}
-                      </Button>
                       <Button variant="secondary" size="sm" onClick={() => { setResetUserId(u.id); setResetNewPassword(''); }}>
                         Reset PW
                       </Button>

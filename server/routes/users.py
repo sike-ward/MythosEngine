@@ -169,7 +169,22 @@ async def update_user_roles(
                 detail="User not found",
             )
 
-        user.roles = req.roles
+        normalized_roles = []
+        for role in req.roles or []:
+            value = (role or "").strip().lower()
+            if value and value not in normalized_roles:
+                normalized_roles.append(value)
+
+        if not normalized_roles:
+            normalized_roles = ["player"]
+
+        if "admin" in normalized_roles and user.id != admin.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Admin is reserved for the creator account and cannot be assigned to normal users",
+            )
+
+        user.roles = normalized_roles
         ctx.users.update_user(user)
         return {"message": "Roles updated successfully", "user_id": user.id}
     except HTTPException:
