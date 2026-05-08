@@ -42,7 +42,7 @@ router = APIRouter()
 _RESOURCE_PERMISSION_RANK = {"read": 1, "write": 2}
 
 
-def _normalize_resource_permissions(permissions: Dict[str, str]) -> Dict[str, str]:
+def _normalize_resource_permissions(permissions: Optional[Dict[str, str]]) -> Dict[str, str]:
     """
     Keep resource-level permissions limited to read/write.
     Legacy 'admin' resource roles are downgraded to 'write'.

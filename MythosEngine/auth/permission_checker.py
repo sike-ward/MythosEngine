@@ -72,8 +72,10 @@ class PermissionChecker:
 
     def can_delete(self, resource: PermissionedResource, user_id: Optional[str]) -> bool:
         """Return True if user_id may delete this resource."""
-        if user_id is None or user_id == "system":
+        if user_id == "system":
             return True
+        if user_id is None:
+            return False
         return user_id == resource.owner_id
 
     def require_read(self, resource: PermissionedResource, user_id: Optional[str]) -> None:
