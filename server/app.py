@@ -23,6 +23,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -36,6 +37,7 @@ sys.path.insert(0, str(_parent))
 # QObject needs a QCoreApplication — create a headless one for the API server.
 try:
     from PyQt6.QtCore import QCoreApplication
+
     _qt_app = QCoreApplication.instance()
     if _qt_app is None:
         _qt_app = QCoreApplication(sys.argv)
@@ -45,23 +47,26 @@ from fastapi.responses import JSONResponse
 
 from MythosEngine.config.config import Config
 from MythosEngine.context.app_context import AppContext
-from server.dependencies import set_app_context
+from server.deps import set_app_context
+from server.limiter import limiter
+from server.middleware.logging import LoggingMiddleware
 from server.routes import (
     ai,
     auth,
     characters,
     dashboard,
     debug,
+    groups,
     invites,
     maps,
     notes,
     sessions,
     settings,
     users,
+    vaults,
+    ws,
 )
 
-from server.limiter import limiter
-from server.middleware.logging import LoggingMiddleware
 logger = logging.getLogger(__name__)
 
 
@@ -78,6 +83,7 @@ async def lifespan(application: FastAPI):
             APP_SESSION_LOG_HANDLER,
             file_handler,
         )
+
         root = logging.getLogger()
         if not any(isinstance(h, type(file_handler)) for h in root.handlers):
             root.addHandler(file_handler)
@@ -103,6 +109,7 @@ async def lifespan(application: FastAPI):
 
     # Build the AI vector index in a background thread so startup is non-blocking.
     if ctx.has_ai():
+
         def _build_index_bg() -> None:
             try:
                 ctx.ai.index_manager.build_index()
@@ -169,9 +176,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     )
     return JSONResponse(
         status_code=500,
-        content={
-            "detail": "An internal server error occurred. See the server log for details."
-        },
+        content={"detail": "An internal server error occurred. See the server log for details."},
     )
 
 
@@ -187,6 +192,9 @@ app.include_router(dashboard.router)
 app.include_router(settings.router)
 app.include_router(users.router, prefix="/users", tags=["users"])
 app.include_router(invites.router, prefix="/invites", tags=["invites"])
+app.include_router(vaults.router, prefix="/vaults", tags=["vaults"])
+app.include_router(groups.router, prefix="/groups", tags=["groups"])
+app.include_router(ws.router, tags=["ws"])
 app.include_router(debug.router, prefix="/debug", tags=["debug"])
 
 

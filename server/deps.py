@@ -1,101 +1,96 @@
 """
-Dependency injection for FastAPI endpoints.
+FastAPI dependency providers for MythosEngine server.
 
-Provides:
-- get_ctx: Access to AppContext
-- get_current_user: Current authenticated user (requires Bearer JWT)
-- require_permission: Route-level permission-check dependency factory
+All route handlers receive AppContext and the current User via these
+FastAPI dependencies, keeping routes thin and testable.
 """
 
-from fastapi import Depends, HTTPException, Request, status
+from typing import Optional
 
-from MythosEngine.auth.permission_checker import PermissionChecker as _PC
+from fastapi import Depends, Header, HTTPException, status
+
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
-
 from server.auth_utils import decode_jwt
 
+_ctx: Optional[AppContext] = None
 
-def get_ctx(request: Request) -> AppContext:
-    """
-    Extract and return the AppContext from the request.
-    Raises 500 if context is not available.
-    """
-    ctx = getattr(request.app.state, "ctx", None)
-    if ctx is None:
+
+def set_app_context(ctx: AppContext) -> None:
+    """Called once at startup to register the AppContext."""
+    global _ctx
+    _ctx = ctx
+
+
+def get_ctx() -> AppContext:
+    """Return the shared AppContext. Raises 503 if not initialised."""
+    if _ctx is None:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="App context not initialized",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Application context not initialised.",
         )
-    return ctx
+    return _ctx
 
 
 def get_current_user(
-    request: Request,
+    authorization: Optional[str] = Header(default=None),
     ctx: AppContext = Depends(get_ctx),
 ) -> User:
     """
-    Extract Authorization Bearer JWT, decode it, and return the User.
+    Extract and validate the Bearer token from the Authorization header.
 
-    Raises 401 if:
-    - No Authorization header
-    - Token is invalid or expired
-    - User not found in storage
+    Returns the authenticated User or raises 401.
     """
-    auth_header = request.headers.get("Authorization")
-    if not auth_header:
+    if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing Authorization header",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail="Missing or invalid Authorization header.",
         )
 
-    parts = auth_header.split()
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Authorization header format. Use: Bearer <token>",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    token = parts[1]
-    payload = decode_jwt(token)  # raises 401 if invalid/expired
+    token = authorization.removeprefix("Bearer ").strip()
+    payload = decode_jwt(token)
     user_id = payload.get("sub")
-
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token payload",
-            headers={"WWW-Authenticate": "Bearer"},
         )
 
     user = ctx.users.get_user(user_id)
-    if not user:
+    if user is None or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail="User not found or disabled.",
         )
 
+    ctx.storage.set_user_context(
+        user.id,
+        is_admin="admin" in (user.roles or []),
+        is_gm="gm" in (user.roles or []),
+    )
+    ctx.current_user_id = user.id
     return user
 
 
 def require_permission(permission: str):
-    """
-    Dependency factory for route-level permission checks.
+    """Dependency factory for route-level permission checks."""
 
-    Usage::
-
-        @router.get("/admin-only")
-        async def endpoint(admin: User = require_permission("admin")):
-            ...
-    """
     def dependency(user: User = Depends(get_current_user)) -> User:
-        checker = _PC()
         if permission not in (user.roles or []):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Missing permission: {permission}",
             )
         return user
+
     return Depends(dependency)
+
+
+def require_admin(user: User = Depends(get_current_user)) -> User:
+    """Raises 403 if the current user does not have the 'admin' role."""
+    if "admin" not in user.roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required.",
+        )
+    return user

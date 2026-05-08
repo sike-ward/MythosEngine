@@ -12,15 +12,19 @@ import TagPanel from '@/components/browse/TagPanel';
 import MetaPanel from '@/components/browse/MetaPanel';
 import PermissionsPanel from '@/components/browse/PermissionsPanel';
 import { SkeletonLine } from '@/components/Skeleton';
-import { notes, folders, ai, isRateLimitError, RATE_LIMIT_MSG } from '@/api';
+import { notes, folders, ai, groups, users, isRateLimitError, RATE_LIMIT_MSG } from '@/api';
+import { useVault } from '@/context/VaultContext';
+import { useRealtime } from '@/context/RealtimeContext';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Browse — Full vault browser (thin orchestrator)
 // ════════════════════════════════════════════════════════════════════════════
 
-export default function Browse() {
+export default function Browse({ user }) {
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
+  const { activeVaultId } = useVault();
+  const { editing, lastEvent, startEditing, updateCursor, stopEditing } = useRealtime();
 
   // ── Selection & navigation ───────────────────────────────────────────────
   const [selectedNoteId, setSelectedNoteId] = useState(null);
@@ -61,19 +65,34 @@ export default function Browse() {
   // ── AI state ─────────────────────────────────────────────────────────────
   const [proposedLinks, setProposedLinks] = useState([]);
   const [summaryResult, setSummaryResult] = useState('');
+  const canManagePermissions = (user?.roles || []).includes('admin');
 
   // ════════════════════════════════════════════════════════════════════════
   // React Query data fetching
   // ════════════════════════════════════════════════════════════════════════
 
   const { data: allFolders = [], isLoading: foldersLoading } = useQuery({
-    queryKey: ['folders'],
-    queryFn: folders.list,
+    queryKey: ['folders', activeVaultId],
+    queryFn: () => folders.list(activeVaultId),
+    enabled: !!activeVaultId,
   });
 
   const { data: allNotes = [], isLoading: notesLoading } = useQuery({
-    queryKey: ['notes'],
-    queryFn: () => notes.list(),
+    queryKey: ['notes', activeVaultId],
+    queryFn: () => notes.list('', '', activeVaultId),
+    enabled: !!activeVaultId,
+  });
+
+  const { data: groupList = [] } = useQuery({
+    queryKey: ['groups'],
+    queryFn: groups.list,
+    enabled: canManagePermissions,
+  });
+
+  const { data: userList = [] } = useQuery({
+    queryKey: ['users'],
+    queryFn: users.list,
+    enabled: canManagePermissions,
   });
 
   const { data: selectedNote, isLoading: noteLoading } = useQuery({
@@ -104,6 +123,16 @@ export default function Browse() {
     if (noteId) setSelectedNoteId(noteId);
   }, [searchParams]);
 
+  useEffect(() => {
+    if (lastEvent?.type === 'note.saved' && lastEvent.vault_id === activeVaultId) {
+      invalidateAll();
+    }
+  }, [lastEvent, activeVaultId]);
+
+  useEffect(() => () => {
+    if (selectedNoteId) stopEditing(selectedNoteId);
+  }, [selectedNoteId]);
+
   // ── Ctrl+S to save ───────────────────────────────────────────────────────
   useEffect(() => {
     const handler = (e) => {
@@ -125,7 +154,7 @@ export default function Browse() {
     clearTimeout(searchTimeout.current);
     searchTimeout.current = setTimeout(async () => {
       try {
-        const data = await notes.search(searchQuery);
+        const data = await notes.search(searchQuery, { vault_id: activeVaultId });
         setSearchResults(data.items || []);
         // Push to history (deduplicate, keep last 10)
         setSearchHistory((prev) => {
@@ -137,7 +166,7 @@ export default function Browse() {
       }
     }, 300);
     return () => clearTimeout(searchTimeout.current);
-  }, [searchQuery]);
+  }, [searchQuery, activeVaultId]);
 
   // ════════════════════════════════════════════════════════════════════════
   // Derived data
@@ -162,23 +191,43 @@ export default function Browse() {
   const unfiledNotes = notesByFolder['__unfiled__'] || [];
 
   const wordCount = (text) => text ? text.trim().split(/\s+/).filter(Boolean).length : 0;
+  const editingPresence = editing.find((item) => item.note_id === selectedNoteId && item.user_id !== user?.id);
+  const permissionSubjects = new Set([user?.id, ...(user?.groups || [])].filter(Boolean));
+  const permissionRank = { read: 1, write: 2, admin: 3 };
+  const notePermissionRole = selectedNote
+    ? [...permissionSubjects]
+        .map((subject) => selectedNote.permissions?.[subject])
+        .filter(Boolean)
+        .sort((left, right) => (permissionRank[right] || 0) - (permissionRank[left] || 0))[0] || null
+    : null;
+  const canEdit =
+    !!selectedNote &&
+    !editingPresence &&
+    (
+      selectedNote.owner_id === user?.id ||
+      notePermissionRole === 'write' ||
+      notePermissionRole === 'admin' ||
+      (user?.roles || []).includes('admin') ||
+      (user?.roles || []).includes('gm')
+    );
 
   // ════════════════════════════════════════════════════════════════════════
   // Mutations
   // ════════════════════════════════════════════════════════════════════════
 
   const invalidateAll = () => {
-    queryClient.invalidateQueries({ queryKey: ['notes'] });
-    queryClient.invalidateQueries({ queryKey: ['folders'] });
+    queryClient.invalidateQueries({ queryKey: ['notes', activeVaultId] });
+    queryClient.invalidateQueries({ queryKey: ['folders', activeVaultId] });
     if (selectedNoteId) queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
   };
 
   const saveNoteMutation = useMutation({
     mutationFn: (data) => notes.update(selectedNoteId, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['notes'] });
+      queryClient.invalidateQueries({ queryKey: ['notes', activeVaultId] });
       queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
       setIsEditing(false);
+      stopEditing(selectedNoteId);
       toast.success('Saved');
     },
     onError: (err) => toast.error('Failed to save: ' + err.message),
@@ -195,11 +244,11 @@ export default function Browse() {
   });
 
   const createNoteMutation = useMutation({
-    mutationFn: ({ title, folderId }) => notes.create(title, '', folderId),
+    mutationFn: ({ title, folderId }) => notes.create(title, '', folderId, [], {}, activeVaultId),
     onSuccess: (created) => {
       setShowCreateNote(false);
       setNewNoteTitle('');
-      queryClient.invalidateQueries({ queryKey: ['notes'] });
+      queryClient.invalidateQueries({ queryKey: ['notes', activeVaultId] });
       setSelectedNoteId(created.id);
       toast.success('Note created');
     },
@@ -207,11 +256,11 @@ export default function Browse() {
   });
 
   const createFolderMutation = useMutation({
-    mutationFn: (name) => folders.create(name),
+    mutationFn: (name) => folders.create(name, null, activeVaultId),
     onSuccess: () => {
       setShowCreateFolder(false);
       setNewFolderName('');
-      queryClient.invalidateQueries({ queryKey: ['folders'] });
+      queryClient.invalidateQueries({ queryKey: ['folders', activeVaultId] });
       toast.success('Folder created');
     },
     onError: (err) => toast.error('Failed to create folder: ' + err.message),
@@ -221,8 +270,8 @@ export default function Browse() {
     mutationFn: (id) => folders.delete(id),
     onSuccess: (_, id) => {
       if (activeFolder === id) setActiveFolder(null);
-      queryClient.invalidateQueries({ queryKey: ['folders'] });
-      queryClient.invalidateQueries({ queryKey: ['notes'] });
+      queryClient.invalidateQueries({ queryKey: ['folders', activeVaultId] });
+      queryClient.invalidateQueries({ queryKey: ['notes', activeVaultId] });
       toast.success('Folder deleted');
     },
     onError: (err) => toast.error('Failed to delete folder: ' + err.message),
@@ -240,7 +289,7 @@ export default function Browse() {
   };
 
   const handleSave = () => {
-    if (!selectedNoteId) return;
+    if (!selectedNoteId || !canEdit) return;
     saveNoteMutation.mutate({ title: editTitle, content: editContent });
   };
 
@@ -272,7 +321,7 @@ export default function Browse() {
       await notes.addTag(selectedNote.id, newTag.trim());
       setNewTag('');
       queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
-      queryClient.invalidateQueries({ queryKey: ['notes'] });
+      queryClient.invalidateQueries({ queryKey: ['notes', activeVaultId] });
       toast.success('Tag added');
     } catch (err) {
       toast.error('Failed to add tag: ' + err.message);
@@ -284,7 +333,7 @@ export default function Browse() {
     try {
       await notes.removeTag(selectedNote.id, tag);
       queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
-      queryClient.invalidateQueries({ queryKey: ['notes'] });
+      queryClient.invalidateQueries({ queryKey: ['notes', activeVaultId] });
       toast.success('Tag removed');
     } catch (err) {
       toast.error('Failed to remove tag: ' + err.message);
@@ -308,7 +357,7 @@ export default function Browse() {
         await notes.addTag(selectedNote.id, tag);
       }
       queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
-      queryClient.invalidateQueries({ queryKey: ['notes'] });
+      queryClient.invalidateQueries({ queryKey: ['notes', activeVaultId] });
       toast.success(`Added ${result.tags.length} tag${result.tags.length > 1 ? 's' : ''}: ${result.tags.join(', ')}`);
     } catch (err) {
       if (isRateLimitError(err)) { toast.error(RATE_LIMIT_MSG); return; }
@@ -356,7 +405,7 @@ export default function Browse() {
       await notes.move(selectedNote.id, destFolderId || null);
       setShowMoveDialog(false);
       queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
-      queryClient.invalidateQueries({ queryKey: ['notes'] });
+      queryClient.invalidateQueries({ queryKey: ['notes', activeVaultId] });
       toast.success('Note moved');
     } catch (err) {
       toast.error('Failed to move: ' + err.message);
@@ -398,6 +447,34 @@ export default function Browse() {
     }
   };
 
+  const handleSetPermission = async (subjectId, role) => {
+    if (!selectedNote || !canEdit) return;
+    const nextPermissions = { ...(selectedNote.permissions || {}) };
+    if (!subjectId) return;
+    if (!role) delete nextPermissions[subjectId];
+    else nextPermissions[subjectId] = role;
+    try {
+      await notes.update(selectedNote.id, { permissions: nextPermissions });
+      queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
+      queryClient.invalidateQueries({ queryKey: ['notes', activeVaultId] });
+      toast.success('Permissions updated');
+    } catch (err) {
+      toast.error('Failed to update permissions: ' + err.message);
+    }
+  };
+
+  const handleToggleGmOnly = async (gmOnly) => {
+    if (!selectedNote || !canEdit) return;
+    try {
+      await notes.updateMeta(selectedNote.id, { gm_only: gmOnly ? 'true' : '' });
+      queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
+      queryClient.invalidateQueries({ queryKey: ['notes', activeVaultId] });
+      toast.success('Visibility updated');
+    } catch (err) {
+      toast.error('Failed to update visibility: ' + err.message);
+    }
+  };
+
   const toggleFolder = (folderId) => {
     setExpandedFolders((prev) => {
       const next = new Set(prev);
@@ -425,8 +502,8 @@ export default function Browse() {
       <div className="flex justify-between items-start">
         <SectionHeader title="📖 Browse" subtitle="Explore and manage your vault." />
         <div className="flex gap-2 items-center">
-          <Button variant="primary" size="sm" onClick={() => setShowCreateNote(true)}>+ Note</Button>
-          <Button variant="secondary" size="sm" onClick={() => setShowCreateFolder(true)}>+ Folder</Button>
+          <Button variant="primary" size="sm" onClick={() => setShowCreateNote(true)} disabled={!activeVaultId}>+ Note</Button>
+          <Button variant="secondary" size="sm" onClick={() => setShowCreateFolder(true)} disabled={!activeVaultId}>+ Folder</Button>
         </div>
       </div>
 
@@ -499,10 +576,15 @@ export default function Browse() {
           editContent={editContent}
           onTitleChange={setEditTitle}
           onContentChange={setEditContent}
-          onEdit={() => setIsEditing(true)}
+          onEdit={() => {
+            if (!canEdit) return;
+            setIsEditing(true);
+            startEditing(selectedNote?.id, 0);
+          }}
           onSave={handleSave}
           onCancel={() => {
             setIsEditing(false);
+            stopEditing(selectedNote?.id);
             if (selectedNote) {
               setEditTitle(selectedNote.title);
               setEditContent(selectedNote.content || '');
@@ -522,6 +604,9 @@ export default function Browse() {
           wordCount={wordCount}
           activeFolder={activeFolder}
           noteLoading={noteLoading && !!selectedNoteId}
+          canEdit={canEdit}
+          editingPresence={editingPresence}
+          onCursorChange={(cursor) => selectedNoteId && updateCursor(selectedNoteId, cursor)}
         />
 
         {/* RIGHT PANEL */}
@@ -545,6 +630,11 @@ export default function Browse() {
                 selectedNote={selectedNote}
                 allFolders={allFolders}
                 onSetGroup={handleSetGroup}
+                groups={groupList}
+                users={userList}
+                canEdit={canEdit}
+                onSetPermission={handleSetPermission}
+                onToggleGmOnly={handleToggleGmOnly}
               />
 
               <MetaPanel

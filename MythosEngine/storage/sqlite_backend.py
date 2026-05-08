@@ -17,14 +17,16 @@ Thread-safe for multi-threaded PyQt6 applications via create_engine with
 check_same_thread=False.
 """
 
+import io
 import json
 import logging
 import re
 import shutil
 import uuid
+import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Set, Tuple
+from typing import Any, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -284,6 +286,7 @@ class SQLiteBackend(StorageBackend):
         # Apply any pending Alembic migrations (stamps fresh DBs to head)
         try:
             from migrations.runner import run_migrations
+
             run_migrations(self.engine)
         except Exception:
             pass
@@ -306,9 +309,7 @@ class SQLiteBackend(StorageBackend):
         self.cost_tracker = CostTracker(self.engine)
 
         # Vector index — in-memory semantic search; builds lazily on first write.
-        self.vector_index = VectorIndexManager(
-            VectorIndexConfig(location=VectorIndexLocation.IN_MEMORY, enabled=True)
-        )
+        self.vector_index = VectorIndexManager(VectorIndexConfig(location=VectorIndexLocation.IN_MEMORY, enabled=True))
 
     def _session(self) -> Session:
         """Get a new database session."""
@@ -351,6 +352,55 @@ class SQLiteBackend(StorageBackend):
         d.mkdir(parents=True, exist_ok=True)
         return d / f"{obj_id}.json"
 
+    def _vault_dir_name(self, vault_id: str) -> str:
+        if not vault_id:
+            return "_default"
+        return re.sub(r"[^A-Za-z0-9._-]+", "_", vault_id)
+
+    def _vault_root(self, vault_id: str = "") -> Path:
+        if not vault_id:
+            return self.vault_path
+        root = self.vault_path / "_vaults" / self._vault_dir_name(vault_id)
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
+    def _vault_abs(self, vault_id: str, rel: str) -> Path:
+        return self._vault_root(vault_id) / rel
+
+    def _permission_subject_ids(self) -> set[str]:
+        subjects: set[str] = set()
+        if self._current_user_id:
+            subjects.add(self._current_user_id)
+        if not self._current_user_id:
+            return subjects
+        try:
+            with self._session() as session:
+                record = session.query(UserRecord).filter(UserRecord.id == self._current_user_id).first()
+                if record:
+                    user = User.model_validate_json(record.data)
+                    subjects.update(user.groups or [])
+        except Exception:
+            pass
+        return subjects
+
+    def _has_vault_access(self, vault_id: str) -> bool:
+        if not vault_id:
+            return True
+        if self._is_admin or self._is_gm:
+            return True
+        with self._session() as session:
+            record = session.query(VaultRecord).filter(VaultRecord.id == vault_id).first()
+            if not record:
+                return vault_id == "default"
+            vault = Vault.model_validate_json(record.data)
+            members = json.loads(record.members_json or "[]")
+            subjects = self._permission_subject_ids()
+            return bool(subjects.intersection(set(vault.permissions or {}))) or self._can_access(
+                vault.owner_id,
+                vault.permissions,
+                members,
+            )
+
     def _abs(self, rel: str) -> Path:
         """Resolve a relative vault path to an absolute Path."""
         return self.vault_path / rel
@@ -372,6 +422,41 @@ class SQLiteBackend(StorageBackend):
             except Exception:
                 continue
         return notes
+
+    def list_groups(self) -> List[Group]:
+        groups: List[Group] = []
+        with self._session() as session:
+            for rec in session.query(GroupRecord).all():
+                try:
+                    group = Group.model_validate_json(rec.data)
+                    if not getattr(group, "is_active", True):
+                        continue
+                    if (
+                        self._is_admin
+                        or self._is_gm
+                        or group.owner_id == self._current_user_id
+                        or self._current_user_id in (group.members or [])
+                    ):
+                        groups.append(group)
+                except Exception:
+                    continue
+        return groups
+
+    def list_vaults(self) -> List[Vault]:
+        vaults: List[Vault] = []
+        with self._session() as session:
+            for rec in session.query(VaultRecord).all():
+                try:
+                    vault = Vault.model_validate_json(rec.data)
+                    members = json.loads(rec.members_json or "[]")
+                    if not getattr(vault, "is_active", True):
+                        continue
+                    if self._can_access(vault.owner_id, vault.permissions, members):
+                        vaults.append(vault)
+                except Exception:
+                    continue
+        vaults.sort(key=lambda item: (item.owner_id != (self._current_user_id or ""), item.name.lower()))
+        return vaults
 
     # ========================================================================
     # Users
@@ -405,7 +490,7 @@ class SQLiteBackend(StorageBackend):
             if record:
                 return User.model_validate_json(record.data)
             # Fallback: scan JSON blobs for rows written before the email column existed
-            for rec in session.query(UserRecord).filter(UserRecord.email == None).all():
+            for rec in session.query(UserRecord).filter(UserRecord.email.is_(None)).all():
                 user = User.model_validate_json(rec.data)
                 if user.email == email:
                     return user
@@ -494,7 +579,7 @@ class SQLiteBackend(StorageBackend):
     def save_folder(self, folder: Folder) -> None:
         """Save or update a Folder record and create its directory."""
         if folder.path:
-            self._abs(folder.path).mkdir(parents=True, exist_ok=True)
+            self._vault_abs(folder.vault_id, folder.path).mkdir(parents=True, exist_ok=True)
 
         with self._session() as session:
             record = session.query(FolderRecord).filter(FolderRecord.id == folder.id).first()
@@ -510,12 +595,16 @@ class SQLiteBackend(StorageBackend):
         with self._session() as session:
             record = session.query(FolderRecord).filter(FolderRecord.id == folder_id).first()
             if record:
-                return Folder.model_validate_json(record.data)
+                folder = Folder.model_validate_json(record.data)
+                if folder.vault_id and not self._has_vault_access(folder.vault_id):
+                    return None
+                return folder
         return None
 
     def delete_folder_by_id(self, folder_id: str) -> None:
         """Delete a Folder by ID and remove its directory."""
-        abs_path = self._abs(folder_id)
+        folder = self.get_folder_by_id(folder_id)
+        abs_path = self._vault_abs(folder.vault_id, folder.path or folder_id) if folder else self._abs(folder_id)
         if abs_path.is_dir():
             shutil.rmtree(abs_path)
 
@@ -523,13 +612,23 @@ class SQLiteBackend(StorageBackend):
             session.query(FolderRecord).filter(FolderRecord.id == folder_id).delete()
             session.commit()
 
-    def list_folders(self, parent: str = "") -> List[str]:
+    def list_folders(self, parent: str = "", vault_id: str = "") -> List[str]:
         """List all folder paths under parent (directory-based enumeration)."""
-        root = self._abs(parent) if parent else self.vault_path
+        root = (
+            self._vault_abs(vault_id, parent)
+            if vault_id and parent
+            else self._vault_root(vault_id)
+            if vault_id
+            else self._abs(parent)
+            if parent
+            else self.vault_path
+        )
         if not root.is_dir():
             return []
         return [
-            str(p.relative_to(self.vault_path)) for p in root.rglob("*") if p.is_dir() and not p.name.startswith(".")
+            str(p.relative_to(root if parent else (self._vault_root(vault_id) if vault_id else self.vault_path)))
+            for p in root.rglob("*")
+            if p.is_dir() and not p.name.startswith(".")
         ]
 
     def create_folder(self, path: str) -> None:
@@ -616,11 +715,15 @@ class SQLiteBackend(StorageBackend):
             record = session.query(NoteRecord).filter(NoteRecord.id == note_id).first()
             if record:
                 note = Note.model_validate_json(record.data)
+                if note.vault_id and not self._has_vault_access(note.vault_id):
+                    return None
                 if not self._can_access(note.owner_id, note.permissions):
+                    return None
+                if not (self._is_admin or self._is_gm) and (getattr(note, "meta", {}) or {}).get("gm_only"):
                     return None
                 # Load content from file if available
                 if hasattr(note, "path") and note.path:
-                    abs_path = self._abs(note.path)
+                    abs_path = self._vault_abs(getattr(note, "vault_id", ""), note.path)
                     if abs_path.is_file():
                         note.content = abs_path.read_text(encoding="utf-8")
                 return note
@@ -662,6 +765,7 @@ class SQLiteBackend(StorageBackend):
         tag: str = "",
         skip: int = 0,
         limit: int = 0,
+        vault_id: str = "",
     ) -> List[Note]:
         """List notes directly from the SQLite database (not file-system based).
 
@@ -672,17 +776,21 @@ class SQLiteBackend(StorageBackend):
         results: List[Note] = []
         with self._session() as session:
             q = session.query(NoteRecord).filter(NoteRecord.is_deleted != True)  # noqa: E712
-            if not (self._is_admin or self._is_gm):
-                uid = self._current_user_id or ""
-                if uid:
-                    q = q.filter(NoteRecord.owner_id == uid)
+            if vault_id:
+                q = q.filter(NoteRecord.vault_id == vault_id)
             if folder:
                 q = q.filter(NoteRecord.folder == folder)
             records = q.order_by(NoteRecord.created_at.desc()).all()
             for record in records:
                 try:
                     note = Note.model_validate_json(record.data)
+                    if vault_id and getattr(note, "vault_id", "") != vault_id:
+                        continue
+                    if getattr(note, "vault_id", "") and not self._has_vault_access(note.vault_id):
+                        continue
                     if not self._can_access(note.owner_id, note.permissions or {}):
+                        continue
+                    if not (self._is_admin or self._is_gm) and (getattr(note, "meta", {}) or {}).get("gm_only"):
                         continue
                     if tag and tag.lower() not in [t.lower() for t in (note.tags or [])]:
                         continue
@@ -690,16 +798,20 @@ class SQLiteBackend(StorageBackend):
                 except Exception:
                     continue
         if limit > 0:
-            return results[skip: skip + limit]
+            return results[skip : skip + limit]
         return results
 
-    def list_all_folders(self) -> List[Folder]:
+    def list_all_folders(self, vault_id: str = "") -> List[Folder]:
         """List all folders directly from the SQLite database."""
         results: List[Folder] = []
         with self._session() as session:
             for record in session.query(FolderRecord).all():
                 try:
                     folder = Folder.model_validate_json(record.data)
+                    if vault_id and getattr(folder, "vault_id", "") != vault_id:
+                        continue
+                    if getattr(folder, "vault_id", "") and not self._has_vault_access(folder.vault_id):
+                        continue
                     results.append(folder)
                 except Exception:
                     continue
@@ -714,7 +826,7 @@ class SQLiteBackend(StorageBackend):
         # Collect accessible note IDs from the DB, excluding soft-deleted
         accessible_ids: set[str] = set()
         with self._session() as session:
-            base_q = session.query(NoteRecord).filter(NoteRecord.is_deleted != True)
+            base_q = session.query(NoteRecord).filter(NoteRecord.is_deleted.is_not(True))
             if self._is_admin or self._is_gm:
                 records = base_q.all()
             else:
@@ -780,9 +892,7 @@ class SQLiteBackend(StorageBackend):
         if abs_path.is_file():
             abs_path.unlink()
         with self._session() as session:
-            session.query(RelationshipRecord).filter(
-                RelationshipRecord.source_path == path
-            ).delete()
+            session.query(RelationshipRecord).filter(RelationshipRecord.source_path == path).delete()
             session.commit()
         self.vector_index.clear()
         self.vector_index.build_index(self._get_all_notes_for_index())
@@ -802,9 +912,7 @@ class SQLiteBackend(StorageBackend):
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src), str(dst))
         with self._session() as session:
-            for rec in session.query(RelationshipRecord).filter(
-                RelationshipRecord.source_path == src_path
-            ).all():
+            for rec in session.query(RelationshipRecord).filter(RelationshipRecord.source_path == src_path).all():
                 rec.source_path = dest_path
             session.commit()
         try:
@@ -1025,9 +1133,7 @@ class SQLiteBackend(StorageBackend):
     # Session Logs (D&D campaign session records)
     # ========================================================================
 
-    def list_session_logs(
-        self, vault_id: str, skip: int = 0, limit: int = 50
-    ) -> Tuple[List[dict], int]:
+    def list_session_logs(self, vault_id: str, skip: int = 0, limit: int = 50) -> Tuple[List[dict], int]:
         """Return non-deleted session logs for a vault, sorted by session_date desc."""
         with self._session() as session:
             q = (
@@ -1063,8 +1169,14 @@ class SQLiteBackend(StorageBackend):
         session_id = data.get("id") or str(uuid.uuid4())
         now = datetime.utcnow()
         updatable = [
-            "title", "session_date", "summary", "raw_notes",
-            "ai_recap", "participants", "xp_gained", "loot_notes",
+            "title",
+            "session_date",
+            "summary",
+            "raw_notes",
+            "ai_recap",
+            "participants",
+            "xp_gained",
+            "loot_notes",
         ]
         with self._session() as session:
             record = session.query(SessionLogRecord).filter(SessionLogRecord.id == session_id).first()
@@ -1135,8 +1247,13 @@ class SQLiteBackend(StorageBackend):
 
     def backup_note(self, note_path: str) -> str:
         """Create a timestamped backup of a note file."""
-        orig = self._abs(note_path)
-        version_dir = self.vault_path / ".versions" / Path(note_path).parent
+        vault_id = ""
+        note = self.get_note_by_id(note_path)
+        if note:
+            vault_id = getattr(note, "vault_id", "")
+        orig = self._vault_abs(vault_id, note_path) if vault_id else self._abs(note_path)
+        version_root = self._vault_root(vault_id) if vault_id else self.vault_path
+        version_dir = version_root / ".versions" / Path(note_path).parent
         version_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         backup = version_dir / f"{orig.name}.{timestamp}.bak"
@@ -1145,7 +1262,10 @@ class SQLiteBackend(StorageBackend):
 
     def list_note_versions(self, note_path: str) -> List[str]:
         """List all backup versions of a note."""
-        version_dir = self.vault_path / ".versions" / Path(note_path).parent
+        note = self.get_note_by_id(note_path)
+        vault_id = getattr(note, "vault_id", "") if note else ""
+        version_root = self._vault_root(vault_id) if vault_id else self.vault_path
+        version_dir = version_root / ".versions" / Path(note_path).parent
         if not version_dir.is_dir():
             return []
         stem = Path(note_path).stem
@@ -1153,31 +1273,111 @@ class SQLiteBackend(StorageBackend):
 
     def restore_note_version(self, note_path: str, version: str) -> None:
         """Restore a note from a backup version."""
-        version_dir = self.vault_path / ".versions" / Path(note_path).parent
-        shutil.copy2(str(version_dir / version), str(self._abs(note_path)))
+        note = self.get_note_by_id(note_path)
+        vault_id = getattr(note, "vault_id", "") if note else ""
+        version_root = self._vault_root(vault_id) if vault_id else self.vault_path
+        version_dir = version_root / ".versions" / Path(note_path).parent
+        dest = self._vault_abs(vault_id, note_path) if vault_id else self._abs(note_path)
+        shutil.copy2(str(version_dir / version), str(dest))
 
     # ========================================================================
     # Attachments
     # ========================================================================
 
-    def list_attachments(self, folder: str = "") -> List[str]:
+    def list_attachments(self, folder: str = "", vault_id: str = "") -> List[str]:
         """List all attachments in a folder."""
-        path = self.vault_path / "_attachments" / folder
+        path = self._vault_root(vault_id) / "_attachments" / folder
         if not path.is_dir():
             return []
         return [p.name for p in path.iterdir() if p.is_file() and p.suffix != ".md"]
 
-    def add_attachment(self, folder: str, filename: str, data: bytes) -> None:
+    def add_attachment(self, folder: str, filename: str, data: bytes, vault_id: str = "") -> None:
         """Add an attachment (binary data) to a folder."""
-        dest = self.vault_path / "_attachments" / folder / filename
+        dest = self._vault_root(vault_id) / "_attachments" / folder / filename
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(data)
 
-    def delete_attachment(self, path: str) -> None:
+    def delete_attachment(self, path: str, vault_id: str = "") -> None:
         """Delete an attachment."""
-        abs_path = self.vault_path / "_attachments" / path
+        abs_path = self._vault_root(vault_id) / "_attachments" / path
         if abs_path.is_file():
             abs_path.unlink()
+
+    def export_vault_zip(self, vault_id: str) -> bytes:
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            vault = self.get_vault_by_id(vault_id)
+            if not vault:
+                raise ValueError("Vault not found")
+            zf.writestr("vault.json", vault.model_dump_json(indent=2))
+            notes = self.list_all_notes(vault_id=vault_id)
+            folders = self.list_all_folders(vault_id=vault_id)
+            zf.writestr(
+                "metadata/notes.json",
+                json.dumps([note.model_dump(mode="json") for note in notes], indent=2, default=str),
+            )
+            zf.writestr(
+                "metadata/folders.json",
+                json.dumps([folder.model_dump(mode="json") for folder in folders], indent=2, default=str),
+            )
+            root = self._vault_root(vault_id)
+            if root.exists():
+                for path in root.rglob("*"):
+                    if path.is_file():
+                        zf.write(path, f"files/{path.relative_to(root)}")
+        return buffer.getvalue()
+
+    def import_vault_zip(
+        self,
+        payload: bytes,
+        owner_id: str,
+        name: Optional[str] = None,
+        new_vault_id: Optional[str] = None,
+    ) -> Vault:
+        with zipfile.ZipFile(io.BytesIO(payload), "r") as zf:
+            vault_data = json.loads(zf.read("vault.json").decode("utf-8"))
+            imported_vault = Vault.model_validate(vault_data)
+            imported_vault.id = new_vault_id or str(uuid.uuid4())
+            imported_vault.owner_id = owner_id
+            imported_vault.name = name or f"{imported_vault.name} (Imported)"
+            # Imported vault sharing is intentionally cleared so the receiving
+            # environment never inherits stale access from the source system.
+            imported_vault.members = []
+            imported_vault.permissions = {}
+            imported_vault.is_active = True
+            self.save_vault(imported_vault)
+
+            files_root = self._vault_root(imported_vault.id)
+            for member in zf.namelist():
+                if member.startswith("files/") and not member.endswith("/"):
+                    rel = member.removeprefix("files/")
+                    dest = files_root / rel
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(zf.read(member))
+
+            for entry in json.loads(zf.read("metadata/folders.json").decode("utf-8")):
+                folder = Folder.model_validate(entry)
+                folder.owner_id = owner_id
+                folder.vault_id = imported_vault.id
+                self.save_folder(folder)
+
+            for entry in json.loads(zf.read("metadata/notes.json").decode("utf-8")):
+                note = Note.model_validate(entry)
+                note.owner_id = owner_id
+                note.vault_id = imported_vault.id
+                # Imported permissions and group bindings are intentionally reset so
+                # the receiving vault never inherits stale access from another system.
+                note.permissions = {}
+                note.group_id = None
+                self.save_note(note)
+
+        return imported_vault
+
+    def schedule_vault_backup(self, vault_id: str, cron: str) -> dict[str, Any]:
+        settings_path = self._vault_root(vault_id) / ".backup_schedule.json"
+        payload = {"vault_id": vault_id, "cron": cron, "updated_at": datetime.utcnow().isoformat()}
+        settings_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return payload
 
     # ========================================================================
     # Search & Existence
@@ -1260,21 +1460,23 @@ class SQLiteBackend(StorageBackend):
                 if not all(t.lower() in note_tags_lower for t in tags):
                     continue
 
-            all_items.append({
-                "id": note.id,
-                "title": note.title,
-                "folder_id": getattr(note, "folder_id", None),
-                "tags": getattr(note, "tags", []) or [],
-                "group_id": getattr(note, "group_id", None),
-                "owner_id": getattr(note, "owner_id", ""),
-                "is_deleted": getattr(note, "is_deleted", False),
-                "created_at": note.created_at,
-                "last_modified": note.last_modified,
-                "snippet": snippet_text or "",
-            })
+            all_items.append(
+                {
+                    "id": note.id,
+                    "title": note.title,
+                    "folder_id": getattr(note, "folder_id", None),
+                    "tags": getattr(note, "tags", []) or [],
+                    "group_id": getattr(note, "group_id", None),
+                    "owner_id": getattr(note, "owner_id", ""),
+                    "is_deleted": getattr(note, "is_deleted", False),
+                    "created_at": note.created_at,
+                    "last_modified": note.last_modified,
+                    "snippet": snippet_text or "",
+                }
+            )
 
         total = len(all_items)
-        page = all_items[skip: skip + limit]
+        page = all_items[skip : skip + limit]
         return {"items": page, "total": total, "skip": skip, "limit": limit}
 
     def _search_notes_like(
@@ -1292,12 +1494,10 @@ class SQLiteBackend(StorageBackend):
         notes_list = self.search_notes(query, vault_id=vault_id, top_k=10000)
 
         if folder:
-            notes_list = [n for n in notes_list
-                          if (getattr(n, "folder_id", "") or "").startswith(folder)]
+            notes_list = [n for n in notes_list if (getattr(n, "folder_id", "") or "").startswith(folder)]
         if tags:
             for t in tags:
-                notes_list = [n for n in notes_list
-                              if t.lower() in [x.lower() for x in (getattr(n, "tags", []) or [])]]
+                notes_list = [n for n in notes_list if t.lower() in [x.lower() for x in (getattr(n, "tags", []) or [])]]
         if date_from:
             dt_from = datetime.fromisoformat(date_from)
             notes_list = [n for n in notes_list if n.created_at and n.created_at >= dt_from]
@@ -1306,7 +1506,7 @@ class SQLiteBackend(StorageBackend):
             notes_list = [n for n in notes_list if n.created_at and n.created_at <= dt_to]
 
         total = len(notes_list)
-        page = notes_list[skip: skip + limit]
+        page = notes_list[skip : skip + limit]
         items = [
             {
                 "id": n.id,
@@ -1345,7 +1545,7 @@ class SQLiteBackend(StorageBackend):
         deleted_paths: set[str] = set()
         try:
             with self._session() as session:
-                for rec in session.query(NoteRecord).filter(NoteRecord.is_deleted == True).all():
+                for rec in session.query(NoteRecord).filter(NoteRecord.is_deleted.is_(True)).all():
                     note_data = json.loads(rec.data or "{}")
                     path = note_data.get("path", "")
                     if path:
@@ -1415,7 +1615,7 @@ class SQLiteBackend(StorageBackend):
     def count_notes(self, folder: str = "", vault_id: str = "") -> int:
         """Return the count of non-deleted notes accessible to the current user."""
         with self._session() as session:
-            q = session.query(NoteRecord).filter(NoteRecord.is_deleted != True)
+            q = session.query(NoteRecord).filter(NoteRecord.is_deleted.is_not(True))
             if vault_id:
                 q = q.filter(NoteRecord.vault_id == vault_id)
             if not (self._is_admin or self._is_gm):
@@ -1447,26 +1647,20 @@ class SQLiteBackend(StorageBackend):
     def _sync_mentions(self, session: Session, source_path: str, content: str) -> None:
         """Replace all relationship rows for source_path with current [[wikilinks]]."""
         targets = set(re.findall(r"\[\[([^\[\]]+)\]\]", content))
-        session.query(RelationshipRecord).filter(
-            RelationshipRecord.source_path == source_path
-        ).delete()
+        session.query(RelationshipRecord).filter(RelationshipRecord.source_path == source_path).delete()
         for target in targets:
             session.add(RelationshipRecord(source_path=source_path, target_path=target))
 
     def get_relationships(self, note_path: str) -> List[str]:
         """Return targets that note_path links to (forward links)."""
         with self._session() as session:
-            rows = session.query(RelationshipRecord).filter(
-                RelationshipRecord.source_path == note_path
-            ).all()
+            rows = session.query(RelationshipRecord).filter(RelationshipRecord.source_path == note_path).all()
             return [r.target_path for r in rows]
 
     def get_backlinks(self, note_path: str) -> List[str]:
         """Return source paths of notes that link to note_path (back-links)."""
         with self._session() as session:
-            rows = session.query(RelationshipRecord).filter(
-                RelationshipRecord.target_path == note_path
-            ).all()
+            rows = session.query(RelationshipRecord).filter(RelationshipRecord.target_path == note_path).all()
             return [r.source_path for r in rows]
 
     def upsert_relationship(self, source_path: str, target_path: str) -> None:

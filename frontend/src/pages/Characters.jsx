@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Users, Plus, Search, Trash2, Save, X } from 'lucide-react';
 import { characters as charsApi, notes as notesApi } from '@/api';
+import { useVault } from '@/context/VaultContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -113,6 +114,7 @@ function TextInput({ value, onChange, placeholder, className = '' }) {
 
 export default function Characters() {
   const qc = useQueryClient();
+  const { activeVaultId } = useVault();
 
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
@@ -124,16 +126,18 @@ export default function Characters() {
   // ── Data queries ────────────────────────────────────────────────────────────
 
   const { data: listData, isLoading } = useQuery({
-    queryKey: ['characters', filter],
-    queryFn: () => charsApi.list('default', filter === 'all' ? null : filter),
+    queryKey: ['characters', activeVaultId, filter],
+    queryFn: () => charsApi.list(activeVaultId, filter === 'all' ? null : filter),
+    enabled: !!activeVaultId,
   });
   const allChars = listData?.items ?? [];
 
   const { data: notesData } = useQuery({
-    queryKey: ['notes'],
-    queryFn: () => notesApi.list(),
+    queryKey: ['notes', activeVaultId],
+    queryFn: () => notesApi.list('', '', activeVaultId),
+    enabled: !!activeVaultId,
   });
-  const allNotes = notesData?.items ?? [];
+  const allNotes = Array.isArray(notesData) ? notesData : notesData?.items ?? [];
 
   const { data: selectedChar } = useQuery({
     queryKey: ['character', selectedId],
@@ -154,7 +158,7 @@ export default function Characters() {
         backstory: selectedChar.backstory ?? '',
         ai_memory: selectedChar.ai_memory ?? '',
         note_ids: selectedChar.note_ids ?? [],
-        vault_id: selectedChar.vault_id ?? 'default',
+         vault_id: selectedChar.vault_id ?? activeVaultId,
       });
       setDirty(false);
     }
@@ -211,7 +215,7 @@ export default function Characters() {
   const handleNewChar = () => {
     setIsCreating(true);
     setSelectedId(null);
-    setForm({ ...EMPTY_FORM, stats: { ...DEFAULT_STATS } });
+    setForm({ ...EMPTY_FORM, stats: { ...DEFAULT_STATS }, vault_id: activeVaultId });
     setDirty(false);
   };
 

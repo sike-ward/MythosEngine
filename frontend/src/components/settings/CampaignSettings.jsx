@@ -1,6 +1,91 @@
+import { useEffect, useMemo, useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import Button from '@/components/Button';
+import Input from '@/components/Input';
+import { vaults } from '@/api';
+import { useVault } from '@/context/VaultContext';
 
 export default function CampaignSettings({ vaultPath, setVaultPath, campaignApiKey, setCampaignApiKey, onSave }) {
+  const qc = useQueryClient();
+  const { vaults: vaultList = [], activeVaultId, setActiveVaultId } = useVault();
+  const activeVault = useMemo(() => vaultList.find((vault) => vault.id === activeVaultId) || null, [vaultList, activeVaultId]);
+  const [newVaultName, setNewVaultName] = useState('');
+  const [activeVaultName, setActiveVaultName] = useState(activeVault?.name || '');
+  const [backupCron, setBackupCron] = useState(activeVault?.settings?.backup_cron || '0 0 * * *');
+
+  useEffect(() => {
+    setActiveVaultName(activeVault?.name || '');
+    setBackupCron(activeVault?.settings?.backup_cron || '0 0 * * *');
+  }, [activeVault]);
+
+  const refreshVaults = () => qc.invalidateQueries({ queryKey: ['vaults'] });
+
+  const createVault = useMutation({
+    mutationFn: () => vaults.create({ name: newVaultName }),
+    onSuccess: (vault) => {
+      setNewVaultName('');
+      setActiveVaultId(vault.id);
+      refreshVaults();
+      toast.success('Vault created');
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const updateVault = useMutation({
+    mutationFn: (payload) => vaults.update(activeVaultId, payload),
+    onSuccess: () => {
+      refreshVaults();
+      toast.success('Vault updated');
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const deleteVault = useMutation({
+    mutationFn: () => vaults.remove(activeVaultId),
+    onSuccess: () => {
+      refreshVaults();
+      toast.success('Vault archived');
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const exportVault = async () => {
+    if (!activeVaultId) return;
+    const blob = await vaults.exportZip(activeVaultId);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${activeVault?.name || activeVaultId}.zip`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importVault = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const imported = await vaults.importZip(file);
+      refreshVaults();
+      setActiveVaultId(imported.id);
+      toast.success('Vault imported');
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      event.target.value = '';
+    }
+  };
+
+  const saveBackupSchedule = async () => {
+    try {
+      await vaults.updateBackup(activeVaultId, backupCron);
+      refreshVaults();
+      toast.success('Backup schedule saved');
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
   const handleBrowseVault = () => {
     if (window.electronAPI?.selectFolder) {
       window.electronAPI.selectFolder().then((path) => {
@@ -45,6 +130,40 @@ export default function CampaignSettings({ vaultPath, setVaultPath, campaignApiK
       </div>
 
       <Button variant="primary" onClick={onSave} className="w-full">Save Campaign Settings</Button>
+
+      <div className="border-t border-border-subtle pt-6 space-y-4">
+        <h4 className="text-lg font-bold text-txt">Vault Management</h4>
+        <div className="grid md:grid-cols-[1fr,160px] gap-3">
+          <Input label="New vault" value={newVaultName} onChange={(e) => setNewVaultName(e.target.value)} />
+          <Button className="self-end" onClick={() => createVault.mutate()} disabled={!newVaultName.trim()}>Create vault</Button>
+        </div>
+
+        {activeVault && (
+          <div className="space-y-4 bg-elevated rounded-xl p-4">
+            <Input
+              label="Active vault name"
+              value={activeVaultName}
+              onChange={(e) => setActiveVaultName(e.target.value)}
+            />
+            <Input
+              label="Backup cron"
+              value={backupCron}
+              onChange={(e) => setBackupCron(e.target.value)}
+              placeholder="0 0 * * *"
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={() => updateVault.mutate({ name: activeVaultName })}>Rename vault</Button>
+              <Button variant="secondary" onClick={saveBackupSchedule}>Save backup schedule</Button>
+              <Button variant="secondary" onClick={exportVault}>Export ZIP</Button>
+              <label className="inline-flex items-center cursor-pointer">
+                <input type="file" accept=".zip" className="hidden" onChange={importVault} />
+                <span className="rounded-xl bg-elevated text-txt-muted hover:bg-hover hover:text-txt px-4 py-2.5">Import ZIP</span>
+              </label>
+              <Button variant="danger" onClick={() => deleteVault.mutate()}>Archive vault</Button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

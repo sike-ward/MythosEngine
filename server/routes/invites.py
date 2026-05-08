@@ -14,9 +14,7 @@ from pydantic import BaseModel
 
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
-
-from server.deps import get_ctx, get_current_user, require_permission
-
+from server.deps import get_ctx, require_permission
 
 router = APIRouter()
 
@@ -27,7 +25,8 @@ router = APIRouter()
 
 
 class InviteListItem(BaseModel):
-    """Invite code item in list response"""
+    """Invite code item in list response, including expiry, usage, and computed status."""
+
     id: str
     code: str
     created_by: str
@@ -35,14 +34,23 @@ class InviteListItem(BaseModel):
     expires_at: datetime
     is_active: bool
     use_count: int
+    max_uses: int
     used_by: str | None
+    status: str
 
 
 class GenerateInviteResponse(BaseModel):
-    """Response body for POST /invites"""
+    """Response body for POST /invites, including expiry and max-use limits."""
+
     code: str
     expires_at: datetime
+    max_uses: int
     message: str
+
+
+class GenerateInviteRequest(BaseModel):
+    ttl_days: int = 7
+    max_uses: int = 1
 
 
 # ============================================================================
@@ -73,6 +81,8 @@ async def list_invites(
                 is_active=inv.is_active,
                 use_count=inv.use_count,
                 used_by=inv.used_by,
+                max_uses=inv.max_uses,
+                status=inv.status,
             )
             for inv in invites
         ]
@@ -85,6 +95,7 @@ async def list_invites(
 
 @router.post("/", response_model=GenerateInviteResponse)
 async def generate_invite(
+    body: GenerateInviteRequest,
     ctx: AppContext = Depends(get_ctx),
     admin: User = require_permission("admin"),
 ):
@@ -95,11 +106,16 @@ async def generate_invite(
     The code expires in 7 days.
     """
     try:
-        invite = ctx.invites.generate(created_by_user_id=admin.id)
+        invite = ctx.invites.generate_with_expiry(
+            created_by_user_id=admin.id,
+            expiry_days=body.ttl_days,
+            max_uses=body.max_uses,
+        )
 
         return GenerateInviteResponse(
             code=invite.code,
             expires_at=invite.expires_at,
+            max_uses=invite.max_uses,
             message=f"Invite code {invite.code} generated successfully",
         )
     except Exception as e:

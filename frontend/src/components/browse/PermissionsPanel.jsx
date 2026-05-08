@@ -1,9 +1,27 @@
+import { useState } from 'react';
 import Badge from '@/components/Badge';
+import Button from '@/components/Button';
 
-export default function PermissionsPanel({ selectedNote, allFolders, onSetGroup }) {
+export default function PermissionsPanel({
+  selectedNote,
+  allFolders,
+  onSetGroup,
+  groups = [],
+  users = [],
+  canEdit = true,
+  onSetPermission,
+  onToggleGmOnly,
+}) {
+  const [subjectId, setSubjectId] = useState('');
+  const [role, setRole] = useState('read');
+  const gmOnly = selectedNote?.meta?.gm_only === 'true' || selectedNote?.meta?.gm_only === true;
+  const getDisplayName = (entityId) =>
+    users.find((user) => user.id === entityId)?.username ||
+    groups.find((group) => group.id === entityId)?.name ||
+    entityId;
+
   return (
     <>
-      {/* Folder */}
       <div>
         <p className="text-xs font-bold text-txt-muted uppercase tracking-wider mb-1">Folder</p>
         <p className="text-sm text-txt">
@@ -13,35 +31,73 @@ export default function PermissionsPanel({ selectedNote, allFolders, onSetGroup 
         </p>
       </div>
 
-      {/* Group */}
       <div>
-        <p className="text-xs font-bold text-txt-muted uppercase tracking-wider mb-1">Group</p>
-        <input
+        <p className="text-xs font-bold text-txt-muted uppercase tracking-wider mb-1">Shared Group</p>
+        <select
           value={selectedNote.group_id || ''}
           onChange={(e) => onSetGroup(e.target.value)}
-          placeholder="None"
+          disabled={!canEdit}
           className="w-full bg-elevated rounded-lg px-2 py-1 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
-        />
+        >
+          <option value="">None</option>
+          {groups.map((group) => (
+            <option key={group.id} value={group.id}>{group.name}</option>
+          ))}
+        </select>
       </div>
 
-      {/* Permissions */}
-      <div>
-        <p className="text-xs font-bold text-txt-muted uppercase tracking-wider mb-1">Permissions</p>
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-bold text-txt-muted uppercase tracking-wider">Permissions</p>
+          <label className="flex items-center gap-2 text-xs text-txt">
+            <input type="checkbox" checked={gmOnly} disabled={!canEdit} onChange={(e) => onToggleGmOnly?.(e.target.checked)} />
+            GM only
+          </label>
+        </div>
         {Object.keys(selectedNote.permissions || {}).length > 0 ? (
           <div className="space-y-1">
-            {Object.entries(selectedNote.permissions).map(([userId, role]) => (
-              <div key={userId} className="flex justify-between text-xs">
-                <span className="text-txt truncate">{userId}</span>
-                <Badge label={role} variant={role === 'admin' ? 'admin' : 'player'} />
+            {Object.entries(selectedNote.permissions).map(([entityId, entityRole]) => (
+              <div key={entityId} className="flex justify-between text-xs">
+                <span className="text-txt truncate">{getDisplayName(entityId)}</span>
+                <Badge label={entityRole} variant={entityRole === 'admin' ? 'admin' : 'player'} />
               </div>
             ))}
           </div>
         ) : (
           <p className="text-txt-muted text-xs">Owner only</p>
         )}
+
+        {canEdit && (
+          <div className="space-y-2">
+            <select
+              value={subjectId}
+              onChange={(e) => setSubjectId(e.target.value)}
+              className="w-full bg-elevated rounded-lg px-2 py-1 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
+            >
+              <option value="">Select user or group</option>
+              {users.map((user) => (
+                <option key={`user-${user.id}`} value={user.id}>User · {user.username}</option>
+              ))}
+              {groups.map((group) => (
+                <option key={`group-${group.id}`} value={group.id}>Group · {group.name}</option>
+              ))}
+            </select>
+            <div className="flex gap-2">
+              <select
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+                className="flex-1 bg-elevated rounded-lg px-2 py-1 text-xs text-txt border border-transparent focus:border-accent focus:outline-none"
+              >
+                <option value="read">read</option>
+                <option value="write">write</option>
+                <option value="admin">admin</option>
+              </select>
+              <Button size="sm" onClick={() => onSetPermission?.(subjectId, role)} disabled={!subjectId}>Share</Button>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Links */}
       <div>
         <p className="text-xs font-bold text-txt-muted uppercase tracking-wider mb-1">
           Links ({(selectedNote.links || []).length})

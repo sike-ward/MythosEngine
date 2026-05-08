@@ -10,9 +10,14 @@ import {
   Map,
   Settings,
   LogOut,
+  Shield,
+  Ticket,
 } from 'lucide-react';
+import { useRealtime } from '@/context/RealtimeContext';
 
-const Sidebar = ({ currentPath, onNavigate, onLogout, user }) => {
+const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeVaultId, onVaultChange }) => {
+  const { onlineUsers } = useRealtime();
+  const isAdmin = user?.roles?.includes?.('admin');
   const navItems = [
     { icon: Home, label: 'Dashboard', path: '/' },
     { icon: Sparkles, label: 'AI', path: '/chat' },
@@ -23,6 +28,10 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user }) => {
     { icon: Globe, label: 'Universe', path: '/universe' },
     { icon: Map, label: 'Maps', path: '/maps' },
   ];
+  const adminItems = [
+    { icon: Shield, label: 'Groups', path: '/admin/groups' },
+    { icon: Ticket, label: 'Invites', path: '/admin/invites' },
+  ];
 
   return (
     <div className="w-[250px] bg-surface h-full flex flex-col border-r border-border-subtle">
@@ -32,6 +41,23 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user }) => {
           ⚡ MythosEngine
         </h2>
         <p className="text-xs text-txt-muted mt-2">Your world. Your story.</p>
+        <div className="mt-4 space-y-2">
+          <label className="block text-[11px] uppercase tracking-widest text-txt-muted font-bold">
+            Active Vault
+          </label>
+          <select
+            value={activeVaultId || ''}
+            onChange={(e) => onVaultChange?.(e.target.value)}
+            className="w-full bg-elevated rounded-lg px-3 py-2 text-sm text-txt border border-border-subtle focus:border-accent focus:outline-none"
+          >
+            {vaults.map((vault) => (
+              <option key={vault.id} value={vault.id}>
+                {vault.name}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-txt-muted">{onlineUsers.length} online player{onlineUsers.length === 1 ? '' : 's'}</p>
+        </div>
       </div>
 
       {/* Navigation Section */}
@@ -62,6 +88,35 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user }) => {
             );
           })}
         </nav>
+        {isAdmin && (
+          <>
+            <p className="uppercase text-[11px] tracking-widest text-txt-muted font-bold mt-6 mb-3">
+              Admin
+            </p>
+            <nav className="flex flex-col gap-2">
+              {adminItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = currentPath === item.path;
+
+                return (
+                  <button
+                    key={item.path}
+                    onClick={() => onNavigate(item.path)}
+                    className={clsx(
+                      'flex items-center gap-3 rounded-xl px-4 py-3 transition-all text-left w-full',
+                      isActive
+                        ? 'bg-accent-soft text-accent font-semibold border-l-4 border-accent'
+                        : 'text-txt-dim hover:bg-hover'
+                    )}
+                  >
+                    <Icon size={20} />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          </>
+        )}
       </div>
 
       {/* Spacer */}

@@ -21,29 +21,28 @@ class VaultManager:
         owner_id: str,
         description: Optional[str] = None,
         members: Optional[List[str]] = None,
-        roles: Optional[List[str]] = None,
         settings: Optional[Dict[str, str]] = None,
         permissions: Optional[Dict[str, str]] = None,
+        vault_id: Optional[str] = None,
     ) -> Vault:
         """
         Create and store a new vault/campaign.
         """
         vault = Vault(
-            id=self._generate_id(),
+            id=vault_id or self._generate_id(),
             name=name,
             owner_id=owner_id,
             description=description,
             members=members or [],
-            roles=roles or ["player"],
             settings=settings or {},
             permissions=permissions or {},
             is_active=True,
             created_at=datetime.utcnow(),
             schema_version=1,
-            version=1,
+            record_version=1,
         )
         self.storage.save_vault(vault)
-        audit("update", "vault", vault.id, user_id=getattr(vault, "owner_id", "system"))
+        audit("create", "vault", vault.id, user_id=getattr(vault, "owner_id", "system"))
         return vault
 
     def get_vault(self, vault_id: str) -> Optional[Vault]:
@@ -51,7 +50,7 @@ class VaultManager:
 
     def update_vault(self, vault: Vault) -> None:
         vault.schema_version = max(vault.schema_version, 1)
-        vault.version += 1
+        vault.record_version += 1
         self.storage.save_vault(vault)
         audit("update", "vault", vault.id, user_id=getattr(vault, "owner_id", "system"))
 
@@ -82,7 +81,9 @@ class VaultManager:
         vault = self.get_vault(vault_id)
         if not vault or not vault.is_active:
             return False
-        if user_id in vault.members and "admin" in vault.roles:
+        if vault.owner_id == user_id:
+            return True
+        if user_id in vault.members:
             return True
         # Extend with your permission rules
         return False

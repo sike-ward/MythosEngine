@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Routes, Route, useNavigate, useLocation } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import Sidebar from "./components/Sidebar";
 import ErrorBoundary from "./components/ErrorBoundary";
 import Dashboard from "./pages/Dashboard";
@@ -13,13 +14,18 @@ import Maps from "./pages/Maps";
 import Settings from "./pages/Settings";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
-import { auth, setToken, getToken } from "./api";
+import AdminGroups from "./pages/AdminGroups";
+import AdminInvites from "./pages/AdminInvites";
+import { auth, setToken, getToken, vaults } from "./api";
 import { useSessionExpiry } from "./hooks/useSessionExpiry";
+import { VaultProvider } from "./context/VaultContext";
+import { RealtimeProvider } from "./context/RealtimeContext";
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [needsSetup, setNeedsSetup] = useState(false);
+  const [activeVaultId, setActiveVaultId] = useState(() => localStorage.getItem("me_active_vault") || "");
   // exp stored in memory only — not persisted to localStorage
   const [sessionExp, setSessionExp] = useState(null);
   const [expiryWarning, setExpiryWarning] = useState(null);
@@ -100,6 +106,21 @@ export default function App() {
     navigate("/login");
   };
 
+  const isAdmin = user?.roles?.includes?.("admin");
+  const { data: vaultList = [] } = useQuery({
+    queryKey: ["vaults", user?.id],
+    queryFn: vaults.list,
+    enabled: !!user,
+  });
+
+  useEffect(() => {
+    if (!vaultList.length) return;
+    const stillExists = vaultList.some((vault) => vault.id === activeVaultId);
+    const nextVaultId = stillExists ? activeVaultId : vaultList[0].id;
+    if (nextVaultId && nextVaultId !== activeVaultId) setActiveVaultId(nextVaultId);
+    if (nextVaultId) localStorage.setItem("me_active_vault", nextVaultId);
+  }, [vaultList, activeVaultId]);
+
   if (loading) {
     return (
       <div className="h-screen bg-base flex items-center justify-center">
@@ -117,39 +138,48 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen flex bg-base overflow-hidden">
-      {/* Session expiry warning banner */}
-      {expiryWarning && (
-        <div className="fixed top-0 left-0 right-0 z-50 bg-warning/90 text-txt text-center py-2 px-4 text-sm font-medium">
-          {expiryWarning}
+    <VaultProvider value={{ vaults: vaultList, activeVaultId, setActiveVaultId }}>
+      <RealtimeProvider user={user} activeVaultId={activeVaultId}>
+        <div className="h-screen flex bg-base overflow-hidden">
+          {expiryWarning && (
+            <div className="fixed top-0 left-0 right-0 z-50 bg-warning/90 text-txt text-center py-2 px-4 text-sm font-medium">
+              {expiryWarning}
+            </div>
+          )}
+
+          <Sidebar
+            currentPath={location.pathname}
+            onNavigate={(path) => navigate(path)}
+            onLogout={handleLogout}
+            user={user}
+            vaults={vaultList}
+            activeVaultId={activeVaultId}
+            onVaultChange={(vaultId) => {
+              setActiveVaultId(vaultId);
+              localStorage.setItem("me_active_vault", vaultId);
+            }}
+          />
+
+          <main className="flex-1 overflow-y-auto">
+            <ErrorBoundary>
+              <Routes>
+                <Route path="/" element={<Dashboard user={user} />} />
+                <Route path="/chat" element={<Chat />} />
+                <Route path="/browse" element={<Browse user={user} />} />
+                <Route path="/characters" element={<Characters />} />
+                <Route path="/create" element={<Create />} />
+                <Route path="/sessions" element={<Sessions user={user} />} />
+                <Route path="/universe" element={<Universe />} />
+                <Route path="/maps" element={<Maps />} />
+                <Route path="/settings" element={<Settings user={user} />} />
+                {isAdmin && <Route path="/admin/groups" element={<AdminGroups />} />}
+                {isAdmin && <Route path="/admin/invites" element={<AdminInvites />} />}
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </ErrorBoundary>
+          </main>
         </div>
-      )}
-
-      {/* Sidebar */}
-      <Sidebar
-        currentPath={location.pathname}
-        onNavigate={(path) => navigate(path)}
-        onLogout={handleLogout}
-        user={user}
-      />
-
-      {/* Main content area */}
-      <main className="flex-1 overflow-y-auto">
-        <ErrorBoundary>
-          <Routes>
-            <Route path="/" element={<Dashboard user={user} />} />
-            <Route path="/chat" element={<Chat />} />
-            <Route path="/browse" element={<Browse user={user} />} />
-            <Route path="/characters" element={<Characters />} />
-            <Route path="/create" element={<Create />} />
-            <Route path="/sessions" element={<Sessions user={user} />} />
-            <Route path="/universe" element={<Universe />} />
-            <Route path="/maps" element={<Maps />} />
-            <Route path="/settings" element={<Settings user={user} />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </ErrorBoundary>
-      </main>
-    </div>
+      </RealtimeProvider>
+    </VaultProvider>
   );
 }

@@ -6,6 +6,7 @@ import SectionHeader from '@/components/SectionHeader';
 import Button from '@/components/Button';
 import Input, { TextArea } from '@/components/Input';
 import { sessions } from '@/api';
+import { useVault } from '@/context/VaultContext';
 
 // ─── SessionDetail ────────────────────────────────────────────────────────────
 
@@ -208,7 +209,8 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
 // ─── Sessions (main page) ─────────────────────────────────────────────────────
 
 export default function Sessions({ user }) {
-  const vaultId = user?.id || '';
+  const { activeVaultId } = useVault();
+  const vaultId = activeVaultId || '';
   const [selectedId, setSelectedId] = useState(null);
   const [isNew, setIsNew] = useState(false);
   const [search, setSearch] = useState('');

@@ -64,6 +64,11 @@ class StorageBackend(ABC):
             return True
         if uid in permissions:
             return True
+        get_subjects = getattr(self, "_permission_subject_ids", None)
+        if callable(get_subjects):
+            subjects = get_subjects()
+            if any(subject in permissions for subject in subjects):
+                return True
         if member_ids and uid in member_ids:
             return True
         return False
@@ -358,22 +363,17 @@ class StorageBackend(ABC):
 
         if query.search_type == "title":
             from pathlib import Path as _Path
-            paths = [
-                n for n in self.list_notes()
-                if query.query_str.lower() in _Path(n).name.lower()
-            ]
+
+            paths = [n for n in self.list_notes() if query.query_str.lower() in _Path(n).name.lower()]
             return [SearchResult(note_path=p, title=_Path(p).stem) for p in paths[: query.top_k]]
 
         if query.search_type == "tag":
-            import re as _re
             results = []
             for n in self.list_notes():
                 try:
                     content = self.read_note(n)
                     tags = [
-                        w.lstrip("#").strip("[]")
-                        for w in content.split()
-                        if w.startswith("#") or w.startswith("[[")
+                        w.lstrip("#").strip("[]") for w in content.split() if w.startswith("#") or w.startswith("[[")
                     ]
                     if any(query.query_str.lower() in t.lower() for t in tags):
                         results.append(SearchResult(note_path=n, title=n))
