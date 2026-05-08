@@ -4,6 +4,7 @@ import {
   Sparkles,
   BookOpen,
   Scroll,
+  User,
   Users,
   Wand2,
   Globe,
@@ -22,11 +23,12 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
     { icon: Home, label: 'Dashboard', path: '/' },
     { icon: Sparkles, label: 'AI', path: '/chat' },
     { icon: BookOpen, label: 'Browse', path: '/browse' },
-    { icon: Users, label: 'Characters', path: '/characters' },
+    { icon: User, label: 'Characters', path: '/characters' },
     { icon: Wand2, label: 'Create', path: '/create' },
     { icon: Scroll, label: 'Sessions', path: '/sessions' },
     { icon: Globe, label: 'Universe', path: '/universe' },
     { icon: Map, label: 'Maps', path: '/maps' },
+    { icon: Users, label: 'Groups', path: '/groups' },
   ];
   const adminItems = [
     { icon: Shield, label: 'Groups', path: '/admin/groups' },

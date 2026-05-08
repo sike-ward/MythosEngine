@@ -14,6 +14,8 @@ import Maps from "./pages/Maps";
 import Settings from "./pages/Settings";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
+import Groups from "./pages/Groups";
+import AdminGroups from "./pages/AdminGroups";
 import AdminInvites from "./pages/AdminInvites";
 import Invites from "./pages/Invites";
 import { auth, setToken, getToken, vaults } from "./api";
@@ -175,6 +177,8 @@ export default function App() {
                 <Route path="/universe" element={<Universe />} />
                 <Route path="/maps" element={<Maps />} />
                 <Route path="/settings" element={<Settings user={user} />} />
+                <Route path="/groups" element={<Groups user={user} />} />
+                {isAdmin && <Route path="/admin/groups" element={<AdminGroups />} />}
                 {isAdmin && <Route path="/admin/invites" element={<AdminInvites />} />}
                 {isAdmin && <Route path="/invites" element={<Invites user={user} />} />}
                 <Route path="*" element={<NotFound />} />

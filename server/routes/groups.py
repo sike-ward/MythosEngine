@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from MythosEngine.context.app_context import AppContext
@@ -23,6 +23,7 @@ class GroupResponse(BaseModel):
     member_roles: dict[str, str] = {}
     vault_ids: List[str] = []
     is_active: bool
+    permissions: Dict[str, bool] = {}
 
 
 class CreateGroupRequest(BaseModel):
@@ -33,6 +34,7 @@ class CreateGroupRequest(BaseModel):
 class UpdateGroupRequest(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=64)
     description: Optional[str] = None
+    permissions: Optional[Dict[str, bool]] = None
 
 
 class UpdateMembersRequest(BaseModel):
@@ -46,11 +48,30 @@ def _to_response(group: Group) -> GroupResponse:
 
 @router.get("/", response_model=List[GroupResponse])
 async def list_groups(
+    vault_id: Optional[str] = Query(None),
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    groups = ctx.storage.list_groups() if hasattr(ctx.storage, "list_groups") else []
-    return [_to_response(group) for group in groups]
+    all_groups = ctx.storage.list_groups() if hasattr(ctx.storage, "list_groups") else []
+    if vault_id:
+        all_groups = [g for g in all_groups if vault_id in (g.vault_ids or [])]
+    return [_to_response(g) for g in all_groups]
+
+
+@router.get("/{group_id}", response_model=GroupResponse)
+async def get_group(
+    group_id: str,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    group = ctx.groups.get_group(group_id)
+    if not group or not getattr(group, "is_active", True):
+        raise HTTPException(status_code=404, detail="Group not found")
+    is_admin = "admin" in (user.roles or [])
+    is_member = user.id in (group.members or []) or group.owner_id == user.id
+    if not is_admin and not is_member:
+        raise HTTPException(status_code=403, detail="Access denied")
+    return _to_response(group)
 
 
 @router.post("/", response_model=GroupResponse, status_code=status.HTTP_201_CREATED)
@@ -77,6 +98,8 @@ async def update_group(
         group.name = body.name
     if body.description is not None:
         group.description = body.description
+    if body.permissions is not None:
+        group.permissions = body.permissions
     ctx.groups.update_group(group)
     return _to_response(group)
 
