@@ -35,7 +35,7 @@ export default function AdminGroups() {
   };
 
   const createGroup = useMutation({
-    mutationFn: () => groups.create({ name, description }),
+    mutationFn: () => groups.create({ name: name.trim(), description: description.trim() || null }),
     onSuccess: (group) => {
       setName('');
       setDescription('');
@@ -90,7 +90,7 @@ export default function AdminGroups() {
         <Card className="p-6 space-y-4">
           <Input label="Group name" value={name} onChange={(e) => setName(e.target.value)} />
           <Input label="Description" value={description} onChange={(e) => setDescription(e.target.value)} />
-          <Button onClick={() => createGroup.mutate()} disabled={!name.trim()}>Create group</Button>
+          <Button onClick={() => createGroup.mutate()} disabled={name.trim().length < 2}>Create group</Button>
           <div className="space-y-2 pt-2 border-t border-border-subtle">
             {groupList.map((group) => (
               <button
