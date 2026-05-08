@@ -15,6 +15,7 @@ import Settings from "./pages/Settings";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
 import AdminInvites from "./pages/AdminInvites";
+import Invites from "./pages/Invites";
 import { auth, setToken, getToken, vaults } from "./api";
 import { useSessionExpiry } from "./hooks/useSessionExpiry";
 import { VaultProvider } from "./context/VaultContext";
@@ -175,6 +176,7 @@ export default function App() {
                 <Route path="/maps" element={<Maps />} />
                 <Route path="/settings" element={<Settings user={user} />} />
                 {isAdmin && <Route path="/admin/invites" element={<AdminInvites />} />}
+                {isAdmin && <Route path="/invites" element={<Invites user={user} />} />}
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </ErrorBoundary>
