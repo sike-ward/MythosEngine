@@ -134,8 +134,10 @@ class CharacterRecord(Base):
     """ORM model for Character data — stored as JSON blob."""
 
     __tablename__ = "characters"
+    __table_args__ = (Index("ix_characters_vault_id", "vault_id"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    vault_id: Mapped[str] = mapped_column(String(36), nullable=False, default="", server_default="")
     data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
 
 
@@ -143,8 +145,10 @@ class MapRecord(Base):
     """ORM model for Map data — stored as JSON blob."""
 
     __tablename__ = "maps"
+    __table_args__ = (Index("ix_maps_vault_id", "vault_id"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    vault_id: Mapped[str] = mapped_column(String(36), nullable=False, default="", server_default="")
     data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
 
 
@@ -327,6 +331,15 @@ class SQLiteBackend(StorageBackend):
             "ALTER TABLE notes ADD COLUMN title TEXT DEFAULT ''",
             "ALTER TABLE notes ADD COLUMN content TEXT DEFAULT ''",
             "ALTER TABLE notes ADD COLUMN tags TEXT DEFAULT ''",
+        ):
+            try:
+                conn.execute(statement)
+            except Exception:
+                pass  # column already exists
+
+        for statement in (
+            "ALTER TABLE characters ADD COLUMN vault_id TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE maps ADD COLUMN vault_id TEXT NOT NULL DEFAULT ''",
         ):
             try:
                 conn.execute(statement)
@@ -952,12 +965,14 @@ class SQLiteBackend(StorageBackend):
 
     def save_character(self, character: Character) -> None:
         """Save or update a Character record."""
+        vault_id = getattr(character, "vault_id", "") or ""
         with self._session() as session:
             record = session.query(CharacterRecord).filter(CharacterRecord.id == character.id).first()
             if record:
+                record.vault_id = vault_id
                 record.data = character.model_dump_json()
             else:
-                record = CharacterRecord(id=character.id, data=character.model_dump_json())
+                record = CharacterRecord(id=character.id, vault_id=vault_id, data=character.model_dump_json())
                 session.add(record)
             session.commit()
 
@@ -979,12 +994,13 @@ class SQLiteBackend(StorageBackend):
         """List non-deleted characters, optionally filtered by vault_id and char_type ('player'|'npc')."""
         results: List[Character] = []
         with self._session() as session:
-            for rec in session.query(CharacterRecord).all():
+            q = session.query(CharacterRecord)
+            if vault_id:
+                q = q.filter(CharacterRecord.vault_id == vault_id)
+            for rec in q.all():
                 try:
                     char = Character.model_validate_json(rec.data)
                     if getattr(char, "is_deleted", False):
-                        continue
-                    if vault_id and getattr(char, "vault_id", "") != vault_id:
                         continue
                     if char_type == "npc" and not getattr(char, "is_npc", False):
                         continue
@@ -1011,12 +1027,14 @@ class SQLiteBackend(StorageBackend):
 
     def save_map(self, map_obj: Map) -> None:
         """Save or update a Map record."""
+        vault_id = getattr(map_obj, "vault_id", "") or ""
         with self._session() as session:
             record = session.query(MapRecord).filter(MapRecord.id == map_obj.id).first()
             if record:
+                record.vault_id = vault_id
                 record.data = map_obj.model_dump_json()
             else:
-                record = MapRecord(id=map_obj.id, data=map_obj.model_dump_json())
+                record = MapRecord(id=map_obj.id, vault_id=vault_id, data=map_obj.model_dump_json())
                 session.add(record)
             session.commit()
 
@@ -1038,12 +1056,11 @@ class SQLiteBackend(StorageBackend):
         """Return all non-deleted Maps for a vault, optionally filtered by map_type."""
         results: List[Map] = []
         with self._session() as session:
-            for record in session.query(MapRecord).all():
+            q = session.query(MapRecord).filter(MapRecord.vault_id == vault_id)
+            for record in q.all():
                 try:
                     map_obj = Map.model_validate_json(record.data)
                     if map_obj.is_deleted:
-                        continue
-                    if map_obj.vault_id != vault_id:
                         continue
                     if map_type and map_obj.map_type != map_type:
                         continue
@@ -1543,12 +1560,11 @@ class SQLiteBackend(StorageBackend):
         search_type: str = "fulltext",
     ) -> List[Note]:
         """
-        Search across all markdown notes.
+        Search across markdown notes.
 
         Case-insensitive substring match on title and content. Soft-deleted
         notes are excluded by cross-referencing the DB is_deleted column.
-        vault_id is accepted for interface compatibility but is ignored
-        (all notes in vault_path are searched).
+        When vault_id is provided, search is scoped to that vault's directory.
         """
         # Collect paths of soft-deleted notes from DB
         deleted_paths: set[str] = set()
@@ -1570,7 +1586,7 @@ class SQLiteBackend(StorageBackend):
                 rel_fwd = rel.replace("\\", "/")
                 if rel in deleted_paths or rel_fwd in deleted_paths:
                     continue
-                p = self.vault_path / rel
+                p = self._vault_root(vault_id) / rel if vault_id else self.vault_path / rel
                 if not p.is_file():
                     continue
                 try:
@@ -1593,11 +1609,12 @@ class SQLiteBackend(StorageBackend):
         # Fulltext: case-insensitive substring match on title and content.
         query_lower = query.lower()
         results: List[Note] = []
-        for p in self.vault_path.rglob("*.md"):
+        search_root = self._vault_root(vault_id) if vault_id else self.vault_path
+        for p in search_root.rglob("*.md"):
             if p.name.startswith("."):
                 continue
             try:
-                rel = str(p.relative_to(self.vault_path))
+                rel = str(p.relative_to(search_root))
                 rel_fwd = rel.replace("\\", "/")
                 if rel in deleted_paths or rel_fwd in deleted_paths:
                     continue
@@ -1607,7 +1624,7 @@ class SQLiteBackend(StorageBackend):
                         Note(
                             id=rel,
                             owner_id="system",
-                            vault_id=vault_id or str(self.vault_path),
+                            vault_id=vault_id or str(search_root),
                             title=p.stem,
                             content=content,
                         )
