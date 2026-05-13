@@ -1,10 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import { toast } from 'sonner';
+import { AlertCircle, Layers } from 'lucide-react';
 import SectionHeader from '@/components/SectionHeader';
 import Button from '@/components/Button';
 import Input, { TextArea } from '@/components/Input';
+import { SkeletonListItem } from '@/components/Skeleton';
 import { sessions } from '@/api';
 import { useVault } from '@/context/VaultContext';
 
@@ -69,7 +72,7 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
       onDeleted();
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err) => toast.error(err.message ?? 'Failed to delete session'),
   });
 
   const handleSave = () => {
@@ -194,7 +197,10 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
           <Button
             variant="danger"
             onClick={() => {
-              if (confirm('Delete this session?')) deleteMutation.mutate();
+              toast('Delete this session?', {
+                action: { label: 'Delete', onClick: () => deleteMutation.mutate() },
+                cancel: { label: 'Cancel', onClick: () => {} },
+              });
             }}
             disabled={deleteMutation.isPending}
           >
@@ -210,16 +216,21 @@ function SessionDetail({ sessionId, isNew, vaultId, ownerId, onSaved, onDeleted 
 
 export default function Sessions({ user }) {
   const { activeVaultId } = useVault();
+  const navigate = useNavigate();
   const vaultId = activeVaultId || '';
   const [selectedId, setSelectedId] = useState(null);
   const [isNew, setIsNew] = useState(false);
   const [search, setSearch] = useState('');
 
-  const { data: listData, isLoading } = useQuery({
+  const { data: listData, isLoading, isError, refetch } = useQuery({
     queryKey: ['sessions', vaultId],
     queryFn: () => sessions.list(vaultId),
     enabled: !!vaultId,
   });
+
+  useEffect(() => {
+    if (isError) toast.error('Failed to load sessions');
+  }, [isError]);
 
   const items = listData?.items || [];
   const filtered = search
@@ -249,6 +260,22 @@ export default function Sessions({ user }) {
   const participantCount = (p) =>
     p ? p.split(',').filter((s) => s.trim()).length : 0;
 
+  if (!activeVaultId) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-3 text-txt-muted">
+        <Layers size={48} className="opacity-20" />
+        <p className="text-sm font-medium">No vault selected</p>
+        <p className="text-xs text-center max-w-xs">Select or create a vault to log sessions.</p>
+        <button
+          onClick={() => navigate('/vaults')}
+          className="mt-1 text-xs bg-accent text-white px-4 py-2 rounded-lg hover:bg-accent/90 transition-colors"
+        >
+          Go to Vaults
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full overflow-hidden">
       {/* Left panel — session list */}
@@ -267,12 +294,22 @@ export default function Sessions({ user }) {
 
         <div className="flex-1 overflow-y-auto p-3 space-y-1">
           {isLoading ? (
-            <p className="text-txt-muted text-sm px-2 py-4">Loading...</p>
+            <div className="space-y-2 pt-1">
+              {Array.from({ length: 4 }).map((_, i) => <SkeletonListItem key={i} />)}
+            </div>
+          ) : isError ? (
+            <div className="flex flex-col items-center gap-2 py-6 text-center">
+              <AlertCircle size={20} className="text-red-400 opacity-70" />
+              <p className="text-txt-muted text-xs">Failed to load sessions.</p>
+              <button onClick={() => refetch()} className="text-xs text-accent hover:underline">
+                Retry
+              </button>
+            </div>
           ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-40 text-center space-y-2">
               <div className="text-4xl">📜</div>
               <p className="text-txt-muted text-sm">
-                {search ? 'No sessions match your search.' : 'No sessions yet.'}
+                {search ? 'No sessions match your search.' : 'No sessions yet. Create your first one!'}
               </p>
             </div>
           ) : (

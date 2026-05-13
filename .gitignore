@@ -36,6 +36,8 @@ frontend/build/
 dist/
 build/
 *.egg-info/
+frontend/dist-electron/
+frontend/dist/
 
 # Testing
 .pytest_cache/

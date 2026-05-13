@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Users, Plus, Search, Trash2, Save, X } from 'lucide-react';
+import { Users, Plus, Search, Trash2, Save, X, AlertCircle, Layers } from 'lucide-react';
 import { characters as charsApi, notes as notesApi } from '@/api';
 import { useVault } from '@/context/VaultContext';
+import { SkeletonListItem } from '@/components/Skeleton';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -115,6 +117,23 @@ function TextInput({ value, onChange, placeholder, className = '' }) {
 export default function Characters() {
   const qc = useQueryClient();
   const { activeVaultId } = useVault();
+  const navigate = useNavigate();
+
+  if (!activeVaultId) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-3 text-txt-muted">
+        <Layers size={48} className="opacity-20" />
+        <p className="text-sm font-medium">No vault selected</p>
+        <p className="text-xs text-center max-w-xs">Select or create a vault to manage characters.</p>
+        <button
+          onClick={() => navigate('/vaults')}
+          className="mt-1 text-xs bg-accent text-white px-4 py-2 rounded-lg hover:bg-accent/90 transition-colors"
+        >
+          Go to Vaults
+        </button>
+      </div>
+    );
+  }
 
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
@@ -125,12 +144,16 @@ export default function Characters() {
 
   // ── Data queries ────────────────────────────────────────────────────────────
 
-  const { data: listData, isLoading } = useQuery({
+  const { data: listData, isLoading, isError, refetch } = useQuery({
     queryKey: ['characters', activeVaultId, filter],
     queryFn: () => charsApi.list(activeVaultId, filter === 'all' ? null : filter),
     enabled: !!activeVaultId,
   });
   const allChars = listData?.items ?? [];
+
+  useEffect(() => {
+    if (isError) toast.error('Failed to load characters');
+  }, [isError]);
 
   const { data: notesData } = useQuery({
     queryKey: ['notes', activeVaultId],
@@ -309,10 +332,21 @@ export default function Characters() {
         {/* Character list */}
         <div className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-2">
           {isLoading ? (
-            <p className="text-txt-muted text-sm text-center py-6">Loading...</p>
+            Array.from({ length: 4 }).map((_, i) => <SkeletonListItem key={i} />)
+          ) : isError ? (
+            <div className="flex flex-col items-center gap-2 py-6 text-center">
+              <AlertCircle size={20} className="text-red-400 opacity-70" />
+              <p className="text-txt-muted text-xs">Failed to load characters.</p>
+              <button
+                onClick={() => refetch()}
+                className="text-xs text-accent hover:underline"
+              >
+                Retry
+              </button>
+            </div>
           ) : filtered.length === 0 ? (
             <p className="text-txt-muted text-sm text-center py-6">
-              {search ? 'No characters match your search.' : 'No characters yet.'}
+              {search ? 'No characters match your search.' : 'No characters yet. Click New to add one.'}
             </p>
           ) : (
             filtered.map((c) => (

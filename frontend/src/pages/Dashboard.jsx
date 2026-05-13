@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -10,17 +11,23 @@ import { dashboard } from '@/api';
 export default function Dashboard({ user }) {
   const navigate = useNavigate();
 
-  const { data: stats, isLoading: statsLoading } = useQuery({
+  const { data: stats, isLoading: statsLoading, isError: statsError } = useQuery({
     queryKey: ['dashboard-stats'],
     queryFn: dashboard.stats,
-    onError: () => toast.error('Failed to load stats'),
   });
 
-  const { data: recent = [], isLoading: recentLoading } = useQuery({
+  const { data: recent = [], isLoading: recentLoading, isError: recentError } = useQuery({
     queryKey: ['dashboard-recent'],
     queryFn: dashboard.recent,
-    onError: () => toast.error('Failed to load recent notes'),
   });
+
+  useEffect(() => {
+    if (statsError) toast.error('Failed to load stats');
+  }, [statsError]);
+
+  useEffect(() => {
+    if (recentError) toast.error('Failed to load recent notes');
+  }, [recentError]);
 
   const loading = statsLoading || recentLoading;
 

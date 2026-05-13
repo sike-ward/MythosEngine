@@ -23,16 +23,79 @@ import { useSessionExpiry } from "./hooks/useSessionExpiry";
 import { VaultProvider } from "./context/VaultContext";
 import { RealtimeProvider } from "./context/RealtimeContext";
 
+// ── Backend startup splash ────────────────────────────────────────────────────
+
+function BackendStartupScreen({ status }) {
+  const isError = status.state === "error";
+  return (
+    <div className="h-screen w-screen bg-base flex items-center justify-center p-8">
+      <div className="text-center max-w-sm space-y-5">
+        <div className="text-5xl">⚡</div>
+        <h1 className="text-2xl font-bold text-txt">MythosEngine</h1>
+
+        {!isError && (
+          <>
+            <p className="text-txt-muted text-sm">
+              {status.message || "Starting server…"}
+            </p>
+            <div className="flex justify-center gap-1.5 pt-1">
+              {[0, 150, 300].map((delay) => (
+                <span
+                  key={delay}
+                  className="w-2 h-2 rounded-full bg-accent animate-bounce"
+                  style={{ animationDelay: `${delay}ms` }}
+                />
+              ))}
+            </div>
+          </>
+        )}
+
+        {isError && (
+          <div className="space-y-4 text-left">
+            <div className="p-4 bg-danger/10 border border-danger/20 rounded-xl">
+              <p className="text-danger text-sm font-semibold mb-1">
+                Failed to start server
+              </p>
+              <pre className="text-txt-muted text-xs whitespace-pre-wrap font-mono leading-relaxed">
+                {status.message}
+              </pre>
+            </div>
+            <button
+              onClick={() => window.location.reload()}
+              className="w-full px-6 py-2.5 bg-accent text-white rounded-xl font-medium hover:opacity-90 transition text-sm"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [needsSetup, setNeedsSetup] = useState(false);
+  // Backend startup state — only meaningful in Electron.
+  const [backendStatus, setBackendStatus] = useState(() =>
+    window.electronAPI ? { state: "starting", message: "Initializing…" } : { state: "ready" }
+  );
   const [activeVaultId, setActiveVaultId] = useState(() => localStorage.getItem("me_active_vault") || "");
   // exp stored in memory only — not persisted to localStorage
   const [sessionExp, setSessionExp] = useState(null);
   const [expiryWarning, setExpiryWarning] = useState(null);
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Subscribe to backend startup status (Electron only).
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    // Fetch current state in case we mounted after the event fired.
+    window.electronAPI.getBackendStatus().then(setBackendStatus);
+    const unsub = window.electronAPI.onBackendStatus(setBackendStatus);
+    return unsub;
+  }, []);
 
   // Listen for 401 auth:logout events dispatched by api.js
   useEffect(() => {
@@ -44,8 +107,10 @@ export default function App() {
     return () => window.removeEventListener('auth:logout', handler);
   }, [navigate]);
 
-  // Try to restore session on mount, and check if first-run setup is needed
+  // Try to restore session on mount, and check if first-run setup is needed.
+  // Only runs once the backend is confirmed ready to avoid premature API calls.
   useEffect(() => {
+    if (backendStatus.state !== "ready") return;
     const init = async () => {
       try {
         // Check if the database needs first-time setup
@@ -63,7 +128,7 @@ export default function App() {
             const data = await auth.me();
             setUser(data.user);
             if (location.pathname === "/admin/groups") {
-              navigate("/owner/invites", { replace: true });
+              navigate("/owner/groups", { replace: true });
             }
             // No exp for restored sessions — token expiry handled by server 401
           } catch {
@@ -77,7 +142,7 @@ export default function App() {
       }
     };
     init();
-  }, []);
+  }, [backendStatus.state]);
 
   // Session expiry countdown (Item 56)
   useSessionExpiry(
@@ -125,6 +190,11 @@ export default function App() {
     if (nextVaultId && nextVaultId !== activeVaultId) setActiveVaultId(nextVaultId);
     if (nextVaultId) localStorage.setItem("me_active_vault", nextVaultId);
   }, [vaultList, activeVaultId]);
+
+  // Show backend startup / error screen until the server is ready.
+  if (backendStatus.state !== "ready") {
+    return <BackendStartupScreen status={backendStatus} />;
+  }
 
   if (loading) {
     return (
