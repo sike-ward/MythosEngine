@@ -128,7 +128,7 @@ export default function App() {
             const data = await auth.me();
             setUser(data.user);
             if (location.pathname === "/admin/groups") {
-              navigate("/owner/invites", { replace: true });
+              navigate("/owner/groups", { replace: true });
             }
             // No exp for restored sessions — token expiry handled by server 401
           } catch {

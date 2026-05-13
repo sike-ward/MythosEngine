@@ -228,6 +228,10 @@ export default function Sessions({ user }) {
     enabled: !!vaultId,
   });
 
+  useEffect(() => {
+    if (isError) toast.error('Failed to load sessions');
+  }, [isError]);
+
   const items = listData?.items || [];
   const filtered = search
     ? items.filter((s) => s.title.toLowerCase().includes(search.toLowerCase()))

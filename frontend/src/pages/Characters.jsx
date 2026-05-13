@@ -151,6 +151,10 @@ export default function Characters() {
   });
   const allChars = listData?.items ?? [];
 
+  useEffect(() => {
+    if (isError) toast.error('Failed to load characters');
+  }, [isError]);
+
   const { data: notesData } = useQuery({
     queryKey: ['notes', activeVaultId],
     queryFn: () => notesApi.list('', '', activeVaultId),

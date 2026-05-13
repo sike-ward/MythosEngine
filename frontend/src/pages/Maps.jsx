@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
@@ -73,6 +73,10 @@ export default function Maps() {
     queryFn: () => maps.list(activeVaultId, filterType),
     enabled: !!activeVaultId,
   });
+
+  useEffect(() => {
+    if (isError) toast.error("Failed to load maps");
+  }, [isError]);
 
   const allMaps = listData?.items ?? [];
   const filtered = search
