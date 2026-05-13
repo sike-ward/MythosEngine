@@ -1,0 +1,7 @@
+# Desktop-only dependencies (PyQt6 GUI layer).
+# Install these in addition to requirements.txt when running the desktop app.
+PyQt6==6.9.1
+PyQt6-Qt6==6.9.1
+PyQt6-WebEngine==6.9.0
+PyQt6-WebEngine-Qt6==6.9.1
+PyQt6_sip==13.10.2
