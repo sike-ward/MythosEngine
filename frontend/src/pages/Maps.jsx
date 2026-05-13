@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
 import clsx from "clsx";
-import { Map, Plus, Trash2, X } from "lucide-react";
+import { Map, Plus, Trash2, X, AlertCircle, Layers } from "lucide-react";
 import { maps } from "../api";
 import { useVault } from "@/context/VaultContext";
+import { SkeletonListItem } from "@/components/Skeleton";
 
 const MAP_TYPES = ["region", "dungeon", "city", "world"];
 
@@ -42,6 +44,7 @@ function TypeBadge({ type }) {
 export default function Maps() {
   const qc = useQueryClient();
   const { activeVaultId } = useVault();
+  const navigate = useNavigate();
   const [selectedId, setSelectedId] = useState(null);
   const [filterType, setFilterType] = useState(null);
   const [search, setSearch] = useState("");
@@ -65,7 +68,7 @@ export default function Maps() {
   } = useForm({ resolver: zodResolver(markerSchema) });
 
   // ── List query ──────────────────────────────────────────────────────────────
-  const { data: listData, isLoading } = useQuery({
+  const { data: listData, isLoading, isError, refetch } = useQuery({
     queryKey: ["maps", activeVaultId, filterType],
     queryFn: () => maps.list(activeVaultId, filterType),
     enabled: !!activeVaultId,
@@ -185,6 +188,22 @@ export default function Maps() {
   };
 
   // ── Render ──────────────────────────────────────────────────────────────────
+  if (!activeVaultId) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-3 text-txt-muted">
+        <Layers size={48} className="opacity-20" />
+        <p className="text-sm font-medium">No vault selected</p>
+        <p className="text-xs text-center max-w-xs">Select or create a vault to manage maps.</p>
+        <button
+          onClick={() => navigate('/vaults')}
+          className="mt-1 text-xs bg-accent text-white px-4 py-2 rounded-lg hover:bg-accent/90 transition-colors"
+        >
+          Go to Vaults
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full">
       {/* Left panel */}
@@ -240,13 +259,27 @@ export default function Maps() {
 
         {/* Map list */}
         <div className="flex-1 overflow-y-auto py-2">
-          {isLoading && (
-            <p className="text-txt-muted text-sm px-4 py-2">Loading…</p>
-          )}
-          {!isLoading && filtered.length === 0 && (
-            <p className="text-txt-muted text-sm px-4 py-4 text-center">No maps found.</p>
-          )}
-          {filtered.map((m) => (
+          {isLoading ? (
+            <div className="space-y-2 px-3 pt-1">
+              {Array.from({ length: 4 }).map((_, i) => <SkeletonListItem key={i} />)}
+            </div>
+          ) : isError ? (
+            <div className="flex flex-col items-center gap-2 py-6 px-4 text-center">
+              <AlertCircle size={20} className="text-red-400 opacity-70" />
+              <p className="text-txt-muted text-xs">Failed to load maps.</p>
+              <button onClick={() => refetch()} className="text-xs text-accent hover:underline">
+                Retry
+              </button>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-6 px-4 text-center">
+              <Map size={28} className="opacity-20" />
+              <p className="text-txt-muted text-sm">
+                {search ? 'No maps match your search.' : 'No maps yet. Click New to add one.'}
+              </p>
+            </div>
+          ) : null}
+          {!isLoading && !isError && filtered.map((m) => (
             <button
               key={m.id}
               onClick={() => handleSelect(m)}
