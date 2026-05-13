@@ -12,7 +12,8 @@
     "electron:build": "vite build && electron-builder",
     "electron:build:win": "vite build && electron-builder --win",
     "electron:build:mac": "vite build && electron-builder --mac",
-    "electron:build:linux": "vite build && electron-builder --linux"
+    "electron:build:linux": "vite build && electron-builder --linux",
+    "build:win": "vite build && electron-builder --win nsis"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.3.0",
@@ -54,26 +55,8 @@
     ],
     "extraResources": [
       {
-        "from": "../server",
-        "to": "server",
-        "filter": ["**/*.py", "!**/__pycache__/**"]
-      },
-      {
-        "from": "../MythosEngine",
-        "to": "MythosEngine",
-        "filter": ["**/*.py", "**/*.json", "!**/__pycache__/**", "!**/settings.json"]
-      },
-      {
-        "from": "../requirements.txt",
-        "to": "requirements.txt"
-      },
-      {
-        "from": "../migrations",
-        "to": "migrations"
-      },
-      {
-        "from": "../alembic.ini",
-        "to": "alembic.ini"
+        "from": "../dist/server",
+        "to": "server"
       }
     ],
     "win": {

@@ -23,19 +23,28 @@ function sendBackendStatus(state, message = "") {
 // ── Launch the FastAPI backend ───────────────────────────────────────────────
 
 function startBackend() {
-  const projectRoot = isDev
-    ? path.join(__dirname, "..", "..")
-    : path.join(process.resourcesPath);
-
-  const pythonCmd = process.platform === "win32" ? "python" : "python3";
-
   sendBackendStatus("starting", "Starting MythosEngine server…");
-
-  apiProcess = spawn(
-    pythonCmd,
-    ["-m", "uvicorn", "server.app:app", "--host", "127.0.0.1", "--port", String(API_PORT)],
-    { cwd: projectRoot, stdio: ["ignore", "pipe", "pipe"] }
-  );
+  if (isDev) {
+    // Dev: run uvicorn directly from the project root so that
+    // `from server.routes import ...` and `from MythosEngine.* import ...` work.
+    const projectRoot = path.join(__dirname, "..", "..");
+    const pythonCmd = process.platform === "win32" ? "python" : "python3";
+    apiProcess = spawn(
+      pythonCmd,
+      ["-m", "uvicorn", "server.app:app", "--host", "127.0.0.1", "--port", String(API_PORT)],
+      { cwd: projectRoot, stdio: ["ignore", "pipe", "pipe"] }
+    );
+  } else {
+    // Packaged: launch the PyInstaller-frozen server.exe bundled in resources.
+    // Pass MYTHOS_DATA_DIR so the server writes vault/logs/DB to the user's
+    // AppData dir (writable) rather than the read-only Program Files location.
+    const serverExe = path.join(process.resourcesPath, "server", "server.exe");
+    const userDataPath = app.getPath("userData");
+    apiProcess = spawn(serverExe, [], {
+      env: { ...process.env, MYTHOS_DATA_DIR: userDataPath },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  }
 
   apiProcess.stdout.on("data", (d) => {
     console.log(`[API] ${d.toString().trim()}`);
