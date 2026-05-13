@@ -308,6 +308,11 @@ class SQLiteBackend(StorageBackend):
 
         self.cost_tracker = CostTracker(self.engine)
 
+        # Per-user OpenAI API key storage and monthly quota enforcement.
+        from MythosEngine.ai.user_api_keys import UserApiKeyStore
+
+        self.user_api_keys = UserApiKeyStore(self.engine)
+
         # Vector index — in-memory semantic search; builds lazily on first write.
         self.vector_index = VectorIndexManager(VectorIndexConfig(location=VectorIndexLocation.IN_MEMORY, enabled=True))
 

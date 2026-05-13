@@ -52,6 +52,7 @@ from server.limiter import limiter
 from server.middleware.logging import LoggingMiddleware
 from server.routes import (
     ai,
+    ai_settings,
     auth,
     characters,
     dashboard,
@@ -188,6 +189,7 @@ app.include_router(sessions.router, prefix="/sessions", tags=["sessions"])
 app.include_router(maps.router, prefix="/maps", tags=["maps"])
 app.include_router(characters.router, prefix="/characters", tags=["characters"])
 app.include_router(ai.router)
+app.include_router(ai_settings.router)
 app.include_router(dashboard.router)
 app.include_router(settings.router)
 app.include_router(users.router, prefix="/users", tags=["users"])

@@ -197,6 +197,16 @@ export const settings = {
   update: (data) => request("PUT", "/settings", data),
 };
 
+// ── AI key & quota settings ───────────────────────────────────────────────────
+export const aiSettings = {
+  get: () => request("GET", "/settings/ai"),
+  saveKey: (api_key) => request("POST", "/settings/ai/key", { api_key }),
+  removeKey: () => request("DELETE", "/settings/ai/key"),
+  adminUsage: () => request("GET", "/admin/ai-usage"),
+  adminSetLimit: (userId, monthly_request_limit) =>
+    request("POST", `/admin/users/${userId}/ai-limit`, { monthly_request_limit }),
+};
+
 // ── Users (admin) ────────────────────────────────────────────────────────────
 export const users = {
   list: () => request("GET", "/users"),
