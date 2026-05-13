@@ -23,6 +23,8 @@ export function getWsBase() {
 }
 
 let _token = localStorage.getItem("me_token") || null;
+let _refreshToken = localStorage.getItem("me_refresh_token") || null;
+let _isRefreshing = false;
 
 export function setToken(t) {
   _token = t;
@@ -34,22 +36,65 @@ export function getToken() {
   return _token;
 }
 
-async function request(method, path, body = null) {
+export function setRefreshToken(t) {
+  _refreshToken = t;
+  if (t) localStorage.setItem("me_refresh_token", t);
+  else localStorage.removeItem("me_refresh_token");
+}
+
+export function getRefreshToken() {
+  return _refreshToken;
+}
+
+async function tryRefresh() {
+  if (!_refreshToken || _isRefreshing) return false;
+  _isRefreshing = true;
+  try {
+    const res = await fetch(`${BASE}/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: _refreshToken }),
+    });
+    if (!res.ok) {
+      setRefreshToken(null);
+      setToken(null);
+      return false;
+    }
+    const data = await res.json();
+    setToken(data.access_token);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    _isRefreshing = false;
+  }
+}
+
+function makeOpts(method, body) {
   const headers = { "Content-Type": "application/json" };
   if (_token) headers["Authorization"] = `Bearer ${_token}`;
-
   const opts = { method, headers };
   if (body) opts.body = JSON.stringify(body);
+  return opts;
+}
 
-  const res = await fetch(`${BASE}${path}`, opts);
+async function request(method, path, body = null) {
+  let res = await fetch(`${BASE}${path}`, makeOpts(method, body));
+
   if (res.status === 401) {
-    setToken(null);
-    window.dispatchEvent(new CustomEvent('auth:logout'));
-    throw new Error("Session expired");
+    const refreshed = await tryRefresh();
+    if (refreshed) {
+      res = await fetch(`${BASE}${path}`, makeOpts(method, body));
+    }
+    if (res.status === 401) {
+      setToken(null);
+      setRefreshToken(null);
+      window.dispatchEvent(new CustomEvent('auth:logout'));
+      throw new Error("Session expired");
+    }
   }
-  if (res.status === 429) {
-    throw new Error("__RATE_LIMIT__");
-  }
+
+  if (res.status === 429) throw new Error("__RATE_LIMIT__");
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || "Request failed");
@@ -61,15 +106,24 @@ async function request(method, path, body = null) {
 async function requestText(method, path) {
   const headers = { "Content-Type": "application/json" };
   if (_token) headers["Authorization"] = `Bearer ${_token}`;
-  const res = await fetch(`${BASE}${path}`, { method, headers });
+  let res = await fetch(`${BASE}${path}`, { method, headers });
+
   if (res.status === 401) {
-    setToken(null);
-    window.location.hash = "#/login";
-    throw new Error("Session expired");
+    const refreshed = await tryRefresh();
+    if (refreshed) {
+      const retryHeaders = { "Content-Type": "application/json" };
+      if (_token) retryHeaders["Authorization"] = `Bearer ${_token}`;
+      res = await fetch(`${BASE}${path}`, { method, headers: retryHeaders });
+    }
+    if (res.status === 401) {
+      setToken(null);
+      setRefreshToken(null);
+      window.dispatchEvent(new CustomEvent('auth:logout'));
+      throw new Error("Session expired");
+    }
   }
-  if (res.status === 429) {
-    throw new Error("__RATE_LIMIT__");
-  }
+
+  if (res.status === 429) throw new Error("__RATE_LIMIT__");
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || "Request failed");
@@ -84,8 +138,10 @@ export const auth = {
     const res = await fetch(`${BASE}/auth/status`);
     return res.json();
   },
-  setup: (email, username, password) =>
-    request("POST", "/auth/setup", { email, username, password }),
+  setup: async (email, username, password) => {
+    const data = await request("POST", "/auth/setup", { email, username, password });
+    return { token: data.access_token, refreshToken: data.refresh_token, user: data.user, exp: data.exp };
+  },
   login: async (email, password) => {
     let res;
     try {
@@ -105,7 +161,12 @@ export const auth = {
       throw new Error(`Login failed: ${err.detail || "Unknown error"}`);
     }
     const data = await res.json();
-    return { token: data.access_token, user: data.user, exp: data.exp };
+    return { token: data.access_token, refreshToken: data.refresh_token, user: data.user, exp: data.exp };
+  },
+  refresh: async () => {
+    const ok = await tryRefresh();
+    if (!ok) throw new Error("Session expired");
+    return _token;
   },
   logout: () => request("POST", "/auth/logout"),
   me: () => request("GET", "/auth/me"),
@@ -114,8 +175,10 @@ export const auth = {
       current_password: current,
       new_password: newPw,
     }),
-  register: (email, username, password, invite_code) =>
-    request("POST", "/auth/register", { email, username, password, invite_code }),
+  register: async (email, username, password, invite_code) => {
+    const data = await request("POST", "/auth/register", { email, username, password, invite_code });
+    return { token: data.access_token, refreshToken: data.refresh_token, user: data.user, exp: data.exp };
+  },
 };
 
 // ── Notes ────────────────────────────────────────────────────────────────────
