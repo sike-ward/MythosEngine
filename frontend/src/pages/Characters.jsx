@@ -125,12 +125,16 @@ export default function Characters() {
 
   // ── Data queries ────────────────────────────────────────────────────────────
 
-  const { data: listData, isLoading } = useQuery({
+  const { data: listData, isLoading, isError: listError } = useQuery({
     queryKey: ['characters', activeVaultId, filter],
     queryFn: () => charsApi.list(activeVaultId, filter === 'all' ? null : filter),
     enabled: !!activeVaultId,
   });
   const allChars = listData?.items ?? [];
+
+  useEffect(() => {
+    if (listError) toast.error('Failed to load characters');
+  }, [listError]);
 
   const { data: notesData } = useQuery({
     queryKey: ['notes', activeVaultId],
@@ -310,6 +314,10 @@ export default function Characters() {
         <div className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-2">
           {isLoading ? (
             <p className="text-txt-muted text-sm text-center py-6">Loading...</p>
+          ) : !activeVaultId ? (
+            <p className="text-txt-muted text-sm text-center py-6">
+              Select a vault in the sidebar to view characters.
+            </p>
           ) : filtered.length === 0 ? (
             <p className="text-txt-muted text-sm text-center py-6">
               {search ? 'No characters match your search.' : 'No characters yet.'}

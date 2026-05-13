@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -65,11 +65,15 @@ export default function Maps() {
   } = useForm({ resolver: zodResolver(markerSchema) });
 
   // ── List query ──────────────────────────────────────────────────────────────
-  const { data: listData, isLoading } = useQuery({
+  const { data: listData, isLoading, isError: listError } = useQuery({
     queryKey: ["maps", activeVaultId, filterType],
     queryFn: () => maps.list(activeVaultId, filterType),
     enabled: !!activeVaultId,
   });
+
+  useEffect(() => {
+    if (listError) toast.error("Failed to load maps");
+  }, [listError]);
 
   const allMaps = listData?.items ?? [];
   const filtered = search
@@ -243,7 +247,10 @@ export default function Maps() {
           {isLoading && (
             <p className="text-txt-muted text-sm px-4 py-2">Loading…</p>
           )}
-          {!isLoading && filtered.length === 0 && (
+          {!isLoading && !activeVaultId && (
+            <p className="text-txt-muted text-sm px-4 py-4 text-center">Select a vault in the sidebar to view maps.</p>
+          )}
+          {!isLoading && activeVaultId && filtered.length === 0 && (
             <p className="text-txt-muted text-sm px-4 py-4 text-center">No maps found.</p>
           )}
           {filtered.map((m) => (

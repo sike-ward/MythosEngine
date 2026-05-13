@@ -215,11 +215,15 @@ export default function Sessions({ user }) {
   const [isNew, setIsNew] = useState(false);
   const [search, setSearch] = useState('');
 
-  const { data: listData, isLoading } = useQuery({
+  const { data: listData, isLoading, isError: listError } = useQuery({
     queryKey: ['sessions', vaultId],
     queryFn: () => sessions.list(vaultId),
     enabled: !!vaultId,
   });
+
+  useEffect(() => {
+    if (listError) toast.error('Failed to load sessions');
+  }, [listError]);
 
   const items = listData?.items || [];
   const filtered = search
@@ -268,6 +272,11 @@ export default function Sessions({ user }) {
         <div className="flex-1 overflow-y-auto p-3 space-y-1">
           {isLoading ? (
             <p className="text-txt-muted text-sm px-2 py-4">Loading...</p>
+          ) : !vaultId ? (
+            <div className="flex flex-col items-center justify-center h-40 text-center space-y-2">
+              <div className="text-4xl">📜</div>
+              <p className="text-txt-muted text-sm">Select a vault in the sidebar to view sessions.</p>
+            </div>
           ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-40 text-center space-y-2">
               <div className="text-4xl">📜</div>
