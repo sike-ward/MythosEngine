@@ -17,3 +17,13 @@ export const SkeletonStatCard = () => (
     <SkeletonLine width="w-1/3" height="h-8" />
   </div>
 )
+
+export const SkeletonListItem = () => (
+  <div className="rounded-xl px-4 py-3 border border-txt-muted/10 animate-pulse">
+    <div className="flex items-center justify-between gap-2 mb-1.5">
+      <div className="h-4 bg-gray-200/20 rounded w-2/3" />
+      <div className="h-4 bg-gray-200/20 rounded w-10" />
+    </div>
+    <div className="h-3 bg-gray-200/20 rounded w-1/2" />
+  </div>
+)
