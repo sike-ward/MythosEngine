@@ -33,16 +33,6 @@ logging.basicConfig(
 _parent = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_parent))
 
-# AppContext imports AuthManager which inherits QObject.
-# QObject needs a QCoreApplication — create a headless one for the API server.
-try:
-    from PyQt6.QtCore import QCoreApplication
-
-    _qt_app = QCoreApplication.instance()
-    if _qt_app is None:
-        _qt_app = QCoreApplication(sys.argv)
-except ImportError:
-    _qt_app = None  # PyQt6 not installed — AuthManager won't work but that's OK
 from fastapi.responses import JSONResponse
 
 from MythosEngine.config.config import Config
