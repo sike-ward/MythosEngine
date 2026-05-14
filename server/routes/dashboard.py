@@ -18,19 +18,41 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 @router.get("/stats")
 def stats(
+    campaign_id: str = "",
+    vault_id: str = "",  # deprecated alias for campaign_id
     ctx: AppContext = Depends(get_ctx),
     _user: User = Depends(get_current_user),
 ):
-    notes = ctx.storage.list_notes()
-    folders = ctx.storage.list_folders()
+    """Return content counts. Scoped by campaign_id when provided (vault_id is deprecated)."""
+    effective_id = campaign_id or vault_id or ""
 
-    # Characters, sessions — count JSON files via storage if available
-    characters = _count_meta(ctx, "characters")
-    sessions = _count_meta(ctx, "sessions")
+    # Characters — query DB directly when an ID is given
+    if effective_id and hasattr(ctx.storage, "list_characters"):
+        characters = len(ctx.storage.list_characters(campaign_id=effective_id))
+    else:
+        characters = _count_meta(ctx, "characters")
+
+    # Notes — use DB count when possible
+    if effective_id and hasattr(ctx.storage, "count_notes"):
+        notes_count = ctx.storage.count_notes(vault_id=effective_id)
+    else:
+        notes_count = len(ctx.storage.list_notes())
+
+    # Play sessions for a campaign
+    sessions = 0
+    if effective_id and hasattr(ctx.storage, "list_play_sessions"):
+        try:
+            _, sessions = ctx.storage.list_play_sessions(effective_id, limit=0)
+        except Exception:
+            sessions = 0
+    if not sessions:
+        sessions = _count_meta(ctx, "sessions")
+
+    folders = ctx.storage.list_folders()
     timeline_events = _count_timeline(ctx)
 
     return {
-        "notes": len(notes),
+        "notes": notes_count,
         "folders": len(folders),
         "characters": characters,
         "quests": 0,  # Quest model not yet implemented
