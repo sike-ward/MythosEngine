@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 import Card from '@/components/Card';
 import Button from '@/components/Button';
 import Input from '@/components/Input';
-import { auth, setToken, isRateLimitError, RATE_LIMIT_MSG } from '@/api';
+import { auth, setToken, setRefreshToken, isRateLimitError, RATE_LIMIT_MSG } from '@/api';
 
 // Must mirror server-side validate_password_strength rules (Item 54)
 const SPECIAL_CHARS = /[!@#$%^&*\-_]/;
@@ -60,6 +60,7 @@ export default function Login({ onLogin, needsSetup = false }) {
     try {
       const data = await auth.login(email, password);
       setToken(data.token);
+      setRefreshToken(data.refreshToken);
       onLogin(data.token, data.user, data.exp ?? null);
     } catch (err) {
       if (isRateLimitError(err)) {
@@ -83,6 +84,7 @@ export default function Login({ onLogin, needsSetup = false }) {
     try {
       const data = await auth.register(regEmail, regDisplayName, regPassword, regInviteCode);
       setToken(data.token);
+      setRefreshToken(data.refreshToken);
       onLogin(data.token, data.user);
     } catch (err) {
       toast.error(err.message || 'Registration failed');
@@ -104,6 +106,7 @@ export default function Login({ onLogin, needsSetup = false }) {
     try {
       const data = await auth.setup(setupEmail, setupUsername, setupPassword);
       setToken(data.token);
+      setRefreshToken(data.refreshToken);
       onLogin(data.token, data.user, data.exp ?? null);
     } catch (err) {
       setSetupError(err.message || 'Setup failed');
