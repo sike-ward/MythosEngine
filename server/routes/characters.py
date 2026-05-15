@@ -178,6 +178,7 @@ async def create_character(
         except AttributeError:
             pass
         ctx.storage.save_character(char)
+        ctx.analytics.track("character.created", user_id=user.id, data={"char_type": req.char_type})
         return _to_response(char)
     except Exception as exc:
         logger.exception("create_character failed")
@@ -234,4 +235,5 @@ async def delete_character(
     """Soft-delete a character."""
     _get_character_or_404(ctx, user, char_id)
     ctx.storage.soft_delete_character(char_id)
+    ctx.analytics.track("character.deleted", user_id=user.id)
     return {"deleted": True, "id": char_id}

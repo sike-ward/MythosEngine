@@ -18,6 +18,7 @@ import NotFound from "./pages/NotFound";
 import Groups from "./pages/Groups";
 import OwnerGroups from "./pages/OwnerGroups";
 import OwnerInvites from "./pages/OwnerInvites";
+import AdminAnalytics from "./pages/AdminAnalytics";
 import { auth, setToken, getToken, setRefreshToken, vaults } from "./api";
 import { useSessionExpiry } from "./hooks/useSessionExpiry";
 import { VaultProvider } from "./context/VaultContext";
@@ -252,6 +253,7 @@ export default function App() {
                 <Route path="/groups" element={<Groups user={user} />} />
                 {isAdmin && <Route path="/owner/groups" element={<OwnerGroups />} />}
                 {isAdmin && <Route path="/owner/invites" element={<OwnerInvites />} />}
+                {isAdmin && <Route path="/admin/analytics" element={<AdminAnalytics />} />}
                 {isAdmin && <Route path="/admin/groups" element={<Navigate to="/owner/groups" replace />} />}
                 {isAdmin && <Route path="/admin/invites" element={<Navigate to="/owner/invites" replace />} />}
                 {isAdmin && <Route path="/invites" element={<Navigate to="/owner/invites" replace />} />}

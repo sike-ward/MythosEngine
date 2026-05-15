@@ -340,6 +340,7 @@ async def login(
         # Login successful — reset rate limiter and log (Items 59, 60)
         _login_limiter.reset(email_key)
         audit("SUCCESS_LOGIN", "auth", user.id, user_id=user.id, detail=f"ip={client_ip}")
+        ctx.analytics.track("auth.login", user_id=user.id)
 
         # Set user context on storage for permission checks
         ctx.storage.set_user_context(
@@ -382,12 +383,14 @@ async def login(
 
 @router.post("/logout")
 async def logout(
+    ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
     """
     Logout the current user. JWTs are stateless so the client is responsible
     for discarding the token. This endpoint confirms the token was valid.
     """
+    ctx.analytics.track("auth.logout", user_id=user.id)
     return {"message": "Logged out successfully"}
 
 

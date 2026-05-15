@@ -368,6 +368,17 @@ export const maps = {
   delete: (id) => request("DELETE", `/maps/${encodeURIComponent(id)}`),
 };
 
+// ── Analytics ─────────────────────────────────────────────────────────────────
+export const analytics = {
+  summary: () => request("GET", "/admin/analytics/summary"),
+  eventsByDay: () => request("GET", "/admin/analytics/events-by-day"),
+  breakdown: () => request("GET", "/admin/analytics/breakdown"),
+  errors: () => request("GET", "/admin/analytics/errors"),
+  users: () => request("GET", "/admin/analytics/users"),
+  getConsent: () => request("GET", "/settings/analytics"),
+  setConsent: (consent) => request("POST", "/settings/analytics/consent", { consent }),
+};
+
 // ── Debug (admin) ─────────────────────────────────────────────────────────────
 export const debug = {
   listCrashLogs: () => request("GET", "/debug/crash-logs"),

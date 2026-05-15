@@ -71,6 +71,7 @@ class UserRecord(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     email: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, default="")
     data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
+    analytics_consent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
 
 
 class GroupRecord(Base):
@@ -232,6 +233,23 @@ class RelationshipRecord(Base):
     target_path: Mapped[str] = mapped_column(String(1024), primary_key=True)
 
 
+class AnalyticsEventRecord(Base):
+    """One row per analytics event — stored with JSON event_data payload."""
+
+    __tablename__ = "analytics_events"
+    __table_args__ = (
+        Index("ix_analytics_events_user_id", "user_id"),
+        Index("ix_analytics_events_event_type", "event_type"),
+        Index("ix_analytics_events_created_at", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    event_data: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
 def _session_log_to_dict(record: SessionLogRecord) -> dict:
     """Convert a SessionLogRecord ORM row to a plain dict."""
     return {
@@ -311,6 +329,16 @@ class SQLiteBackend(StorageBackend):
         finally:
             raw_conn.close()
 
+        # Add missing analytics columns for databases created before this feature.
+        raw_conn = self.engine.raw_connection()
+        try:
+            self._setup_analytics(raw_conn)
+            raw_conn.commit()
+        except Exception:
+            pass
+        finally:
+            raw_conn.close()
+
         # AI cost tracking — records token usage per user/vault/operation.
         from MythosEngine.ai.cost_tracker import CostTracker
 
@@ -376,6 +404,13 @@ class SQLiteBackend(StorageBackend):
                 DELETE FROM notes_fts WHERE id=old.id;
             END
         """)
+
+    def _setup_analytics(self, conn) -> None:
+        """Add analytics_consent column to users table for legacy databases."""
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN analytics_consent INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass  # column already exists
 
     def _setup_campaign_columns(self, conn) -> None:
         """Add campaign_id column to characters, maps, and notes if not already present."""
@@ -1820,6 +1855,74 @@ class SQLiteBackend(StorageBackend):
         return codes
 
     # ========================================================================
+    # Analytics
+    # ========================================================================
+
+    def save_analytics_event(self, user_id: str, event_type: str, event_data: Optional[dict] = None) -> None:
+        """Persist an analytics event row."""
+        record = AnalyticsEventRecord(
+            id=str(uuid.uuid4()),
+            user_id=user_id,
+            event_type=event_type,
+            event_data=json.dumps(event_data or {}),
+            created_at=datetime.utcnow(),
+        )
+        with self._session() as session:
+            session.add(record)
+            session.commit()
+
+    def user_has_analytics_consent(self, user_id: str) -> bool:
+        """Return True if the user has opted in to analytics."""
+        with self._session() as session:
+            record = session.query(UserRecord).filter(UserRecord.id == user_id).first()
+            if record:
+                return bool(getattr(record, "analytics_consent", False))
+        return False
+
+    def set_analytics_consent(self, user_id: str, consent: bool) -> None:
+        """Set the user's analytics consent flag; creates a stub row if user is missing."""
+        with self._session() as session:
+            record = session.query(UserRecord).filter(UserRecord.id == user_id).first()
+            if record:
+                record.analytics_consent = consent
+            else:
+                record = UserRecord(id=user_id, email=None, data="{}", analytics_consent=consent)
+                session.add(record)
+            session.commit()
+
+    def get_analytics_events(
+        self,
+        user_id: Optional[str] = None,
+        event_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        days: int = 30,
+    ) -> List[dict]:
+        """Return analytics events filtered by user/type, ordered newest-first."""
+        from datetime import timedelta
+
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        with self._session() as session:
+            q = session.query(AnalyticsEventRecord).filter(
+                AnalyticsEventRecord.created_at >= cutoff
+            )
+            if user_id:
+                q = q.filter(AnalyticsEventRecord.user_id == user_id)
+            if event_type:
+                q = q.filter(AnalyticsEventRecord.event_type == event_type)
+            q = q.order_by(AnalyticsEventRecord.created_at.desc())
+            if limit:
+                q = q.limit(limit)
+            return [
+                {
+                    "id": r.id,
+                    "user_id": r.user_id,
+                    "event_type": r.event_type,
+                    "event_data": json.loads(r.event_data or "{}"),
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                }
+                for r in q.all()
+            ]
+
     # Campaigns (new schema — tables created by migration 0005)
     # ========================================================================
 

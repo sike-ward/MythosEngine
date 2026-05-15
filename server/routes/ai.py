@@ -20,12 +20,19 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from MythosEngine.ai.cost_tracker import AIUsageRecord
+from MythosEngine.ai.cost_tracker import AIUsageRecord, _DEFAULT_PRICING, _PRICING
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
 
 from server.deps import get_ctx, get_current_user
 from server.limiter import limiter
+
+
+def _estimate_cost(ctx: AppContext, prompt_tokens: int, completion_tokens: int) -> float:
+    """Estimate USD cost from token counts using configured model pricing."""
+    model = getattr(ctx.config, "PREFERRED_MODEL", "") or "gpt-4o"
+    prompt_rate, completion_rate = _PRICING.get(model, _DEFAULT_PRICING)
+    return round((prompt_tokens * prompt_rate + completion_tokens * completion_rate) / 1_000_000, 8)
 
 
 router = APIRouter(prefix="/ai", tags=["ai"])
@@ -214,7 +221,14 @@ async def ask(
         _apply_preferred_model(ctx)
         ai = _get_ai_for_user(str(user.id), ctx)
         full_prompt = _build_prompt_with_history(req.prompt, req.history)
+        ctx.analytics.track("ai.request_sent", user_id=user.id, data={"operation": "ask"})
         response, prompt_tokens, completion_tokens = ai.ask(full_prompt)
+        cost_usd = _estimate_cost(ctx, prompt_tokens, completion_tokens)
+        ctx.analytics.track(
+            "ai.request_completed",
+            user_id=user.id,
+            data={"operation": "ask", "cost_usd": cost_usd, "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+        )
 
         return AskResponse(
             response=response,
@@ -224,6 +238,7 @@ async def ask(
     except HTTPException:
         raise
     except Exception as e:
+        ctx.analytics.track("ai.request_failed", user_id=user.id, data={"operation": "ask", "error": str(e)})
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"AI request failed: {str(e)}",
