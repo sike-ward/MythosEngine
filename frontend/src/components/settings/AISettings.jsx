@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import Button from '@/components/Button';
-import { ai } from '@/api';
+import { ai, aiSettings } from '@/api';
 
 const AI_MODELS = [
   { value: 'gpt-4o', label: 'GPT-4o' },
@@ -15,14 +16,21 @@ const inputCls =
   'w-full bg-elevated rounded-xl px-4 py-3 text-txt border-2 border-transparent focus:border-accent focus:outline-none transition';
 
 export default function AISettings({
-  apiKey, setApiKey,
   preferredModel, setPreferredModel,
   maxTokens, setMaxTokens,
   streamingEnabled, setStreamingEnabled,
   aiHistoryLimit, setAiHistoryLimit,
   onSave,
 }) {
-  const [showApiKey, setShowApiKey] = useState(false);
+  const [newKey, setNewKey] = useState('');
+  const [showNewKey, setShowNewKey] = useState(false);
+  const queryClient = useQueryClient();
+
+  const { data: keyStatus, isLoading: keyLoading } = useQuery({
+    queryKey: ['ai-key-settings'],
+    queryFn: aiSettings.get,
+    retry: false,
+  });
 
   const { data: usageData, isLoading: usageLoading } = useQuery({
     queryKey: ['ai-usage'],
@@ -30,34 +38,125 @@ export default function AISettings({
     retry: false,
   });
 
+  const saveKeyMutation = useMutation({
+    mutationFn: () => aiSettings.saveKey(newKey.trim()),
+    onSuccess: () => {
+      setNewKey('');
+      queryClient.invalidateQueries({ queryKey: ['ai-key-settings'] });
+      toast.success('Personal API key saved');
+    },
+    onError: (err) => toast.error(err.message || 'Failed to save key'),
+  });
+
+  const removeKeyMutation = useMutation({
+    mutationFn: aiSettings.removeKey,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ai-key-settings'] });
+      toast.success('Personal key removed — using shared server key');
+    },
+    onError: () => toast.error('Failed to remove key'),
+  });
+
+  const handleSaveKey = () => {
+    const trimmed = newKey.trim();
+    if (!trimmed.startsWith('sk-')) {
+      toast.error("API key must start with 'sk-'");
+      return;
+    }
+    saveKeyMutation.mutate();
+  };
+
   return (
     <div className="space-y-8">
-      {/* ── AI Configuration ───────────────────────────────────────────── */}
+      {/* ── Personal API Key ────────────────────────────────────────────── */}
       <div>
+        <h3 className="text-lg font-bold text-txt mb-1">OpenAI Key</h3>
+        <p className="text-sm text-txt-muted mb-4">
+          By default you share the server's key (subject to a monthly request limit).
+          Enter your own key to remove that limit and use your own quota.
+        </p>
+
+        {keyLoading ? (
+          <p className="text-sm text-txt-muted">Loading…</p>
+        ) : keyStatus?.has_personal_key ? (
+          /* ── Personal key active ── */
+          <div className="bg-elevated rounded-xl p-4 flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-txt">Using your personal OpenAI key</p>
+              <p className="text-xs text-txt-muted mt-0.5">No server-side request limit applies.</p>
+            </div>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => removeKeyMutation.mutate()}
+              disabled={removeKeyMutation.isPending}
+            >
+              Remove key
+            </Button>
+          </div>
+        ) : (
+          /* ── Server key + quota ── */
+          <div className="space-y-3">
+            <div className="bg-elevated rounded-xl p-4">
+              <p className="text-sm font-medium text-txt mb-1">Using shared server key</p>
+              {keyStatus && (
+                <div className="flex items-center gap-2 mt-2">
+                  <div className="flex-1 bg-card rounded-full h-2 overflow-hidden">
+                    <div
+                      className="h-2 rounded-full bg-accent transition-all"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          keyStatus.monthly_request_limit > 0
+                            ? (keyStatus.requests_this_month / keyStatus.monthly_request_limit) * 100
+                            : 0
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                  <span className="text-xs text-txt-muted whitespace-nowrap">
+                    {keyStatus.requests_this_month} / {keyStatus.monthly_request_limit} requests this month
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-txt-muted text-sm mb-2 font-medium">
+                Add your own OpenAI key
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type={showNewKey ? 'text' : 'password'}
+                  value={newKey}
+                  onChange={(e) => setNewKey(e.target.value)}
+                  placeholder="sk-..."
+                  className="flex-1 bg-elevated rounded-xl px-4 py-3 text-txt border-2 border-transparent focus:border-accent focus:outline-none transition"
+                />
+                <button
+                  onClick={() => setShowNewKey(!showNewKey)}
+                  className="text-txt-secondary hover:text-txt transition px-2"
+                >
+                  {showNewKey ? '👁️' : '👁️‍🗨️'}
+                </button>
+                <Button
+                  variant="primary"
+                  onClick={handleSaveKey}
+                  disabled={!newKey.trim() || saveKeyMutation.isPending}
+                >
+                  Save key
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── AI Model Settings ───────────────────────────────────────────── */}
+      <div className="border-t border-txt-muted/10 pt-6">
         <h3 className="text-lg font-bold text-txt mb-4">AI Configuration</h3>
         <div className="space-y-4">
 
-          {/* API Key */}
-          <div>
-            <label className="block text-txt-muted text-sm mb-2 font-medium">API Key</label>
-            <div className="flex gap-2">
-              <input
-                type={showApiKey ? 'text' : 'password'}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="sk-..."
-                className="flex-1 bg-elevated rounded-xl px-4 py-3 text-txt border-2 border-transparent focus:border-accent focus:outline-none transition"
-              />
-              <button
-                onClick={() => setShowApiKey(!showApiKey)}
-                className="text-txt-secondary hover:text-txt transition"
-              >
-                {showApiKey ? '👁️' : '👁️‍🗨️'}
-              </button>
-            </div>
-          </div>
-
-          {/* Preferred AI Model (item 111) */}
           <div>
             <label className="block text-txt-muted text-sm mb-2 font-medium">Preferred AI Model</label>
             <select
@@ -71,7 +170,6 @@ export default function AISettings({
             </select>
           </div>
 
-          {/* Max Tokens */}
           <div>
             <label className="block text-txt-muted text-sm mb-2 font-medium">Max Tokens</label>
             <input
@@ -82,7 +180,6 @@ export default function AISettings({
             />
           </div>
 
-          {/* Streaming toggle (item 112) */}
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-txt">Use streaming responses</p>
@@ -100,7 +197,6 @@ export default function AISettings({
             </label>
           </div>
 
-          {/* Conversation history limit (item 113) */}
           <div>
             <label className="block text-txt-muted text-sm mb-2 font-medium">
               Max conversation history (messages)
@@ -120,7 +216,7 @@ export default function AISettings({
 
       <Button variant="primary" onClick={onSave} className="w-full">Save AI Settings</Button>
 
-      {/* ── Usage This Month (item 115) ─────────────────────────────────── */}
+      {/* ── Usage This Month ─────────────────────────────────────────────── */}
       <div className="border-t border-txt-muted/10 pt-6">
         <h3 className="text-base font-bold text-txt mb-4">Usage this month</h3>
         {usageLoading ? (

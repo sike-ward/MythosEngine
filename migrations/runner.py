@@ -69,7 +69,12 @@ def run_migrations(engine: "Engine") -> None:
             has_email_col = True  # Cannot inspect; treat as fresh and stamp.
 
         if has_email_col:
-            command.stamp(cfg, "head")
+            # Fresh DB: create_all() built the 14 legacy tables (revisions
+            # 0001-0004).  Stamp to 0004 so Alembic skips those DDL migrations,
+            # then upgrade to head so migration 0005 runs and creates the new
+            # 35 tables that create_all() does not know about.
+            command.stamp(cfg, "0004")
+            command.upgrade(cfg, "head")
         else:
             # Stamp to 0003 (the revision immediately before the fix migration)
             # then upgrade so only migration 0004 runs.

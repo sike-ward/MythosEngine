@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import Button from '@/components/Button';
 import Badge from '@/components/Badge';
-import { users, invites, dashboard } from '@/api';
+import { users, invites, dashboard, aiSettings } from '@/api';
 
 const ROLE_ADMIN = 'admin';
 const ROLE_PLAYER = 'player';
@@ -12,6 +12,8 @@ export default function AdminSettings() {
   const queryClient = useQueryClient();
   const [resetUserId, setResetUserId] = useState(null);
   const [resetNewPassword, setResetNewPassword] = useState('');
+  const [editLimitUserId, setEditLimitUserId] = useState(null);
+  const [editLimitValue, setEditLimitValue] = useState('');
 
   const { data: usersList = [], isLoading: usersLoading } = useQuery({
     queryKey: ['users'],
@@ -27,6 +29,29 @@ export default function AdminSettings() {
     queryKey: ['dashboard-stats'],
     queryFn: dashboard.stats,
   });
+
+  const { data: aiUsageList = [], isLoading: aiUsageLoading } = useQuery({
+    queryKey: ['admin-ai-usage'],
+    queryFn: aiSettings.adminUsage,
+    retry: false,
+  });
+
+  const setLimitMutation = useMutation({
+    mutationFn: ({ userId, limit }) => aiSettings.adminSetLimit(userId, limit),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-ai-usage'] });
+      setEditLimitUserId(null);
+      setEditLimitValue('');
+      toast.success('Request limit updated');
+    },
+    onError: () => toast.error('Failed to update limit'),
+  });
+
+  const handleSetLimit = () => {
+    const limit = parseInt(editLimitValue, 10);
+    if (isNaN(limit) || limit < 0) { toast.error('Enter a valid number >= 0'); return; }
+    setLimitMutation.mutate({ userId: editLimitUserId, limit });
+  };
 
   const generateInviteMutation = useMutation({
     mutationFn: invites.generate,
@@ -176,6 +201,113 @@ export default function AdminSettings() {
                 </div>
               );
             })}
+          </div>
+        )}
+      </div>
+
+      {/* AI Usage Table */}
+      <div className="border-t border-txt-muted/20 pt-6">
+        <h3 className="text-lg font-bold text-txt mb-4">AI Usage This Month</h3>
+        <p className="text-txt-muted text-sm mb-3">
+          Users on the shared server key have a monthly request limit. Users with a personal key are unlimited.
+        </p>
+
+        {editLimitUserId && (
+          <div className="bg-elevated rounded-xl p-4 mb-4 flex items-end gap-3">
+            <div className="flex-1">
+              <label className="block text-txt-muted text-xs mb-1 font-medium">
+                New monthly limit for {aiUsageList.find((r) => r.user_id === editLimitUserId)?.username || editLimitUserId}
+              </label>
+              <input
+                type="number"
+                min={0}
+                value={editLimitValue}
+                onChange={(e) => setEditLimitValue(e.target.value)}
+                placeholder="e.g. 100"
+                className="w-full bg-card rounded-lg px-3 py-2 text-sm text-txt border border-transparent focus:border-accent focus:outline-none"
+              />
+            </div>
+            <Button variant="primary" size="sm" onClick={handleSetLimit} disabled={setLimitMutation.isPending}>
+              Save
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => { setEditLimitUserId(null); setEditLimitValue(''); }}>
+              Cancel
+            </Button>
+          </div>
+        )}
+
+        {aiUsageLoading ? (
+          <p className="text-txt-muted text-sm">Loading usage…</p>
+        ) : aiUsageList.length === 0 ? (
+          <div className="bg-elevated rounded-xl p-4 text-center">
+            <p className="text-txt-muted text-sm">No AI usage records yet.</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-txt-muted/20">
+                  <th className="text-left py-3 px-4 text-txt-muted font-medium">User</th>
+                  <th className="text-left py-3 px-4 text-txt-muted font-medium">Key</th>
+                  <th className="text-left py-3 px-4 text-txt-muted font-medium">Requests</th>
+                  <th className="text-left py-3 px-4 text-txt-muted font-medium">Limit</th>
+                  <th className="text-left py-3 px-4 text-txt-muted font-medium">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {aiUsageList.map((row) => {
+                  const pct = row.monthly_request_limit > 0
+                    ? Math.min(100, (row.requests_this_month / row.monthly_request_limit) * 100)
+                    : 0;
+                  return (
+                    <tr key={row.user_id} className="border-b border-txt-muted/10 hover:bg-hover transition">
+                      <td className="py-3 px-4 text-txt font-medium">
+                        {row.username}
+                        {row.email && <span className="text-txt-muted font-normal ml-1">({row.email})</span>}
+                      </td>
+                      <td className="py-3 px-4">
+                        <Badge
+                          label={row.has_personal_key ? 'personal' : 'server'}
+                          variant={row.has_personal_key ? 'active' : 'player'}
+                        />
+                      </td>
+                      <td className="py-3 px-4">
+                        {row.has_personal_key ? (
+                          <span className="text-txt-muted text-xs">unlimited</span>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <div className="w-20 bg-card rounded-full h-1.5 overflow-hidden">
+                              <div
+                                className={`h-1.5 rounded-full transition-all ${pct >= 90 ? 'bg-red-400' : 'bg-accent'}`}
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                            <span className="text-txt text-xs">{row.requests_this_month}</span>
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-txt">
+                        {row.has_personal_key ? '—' : row.monthly_request_limit}
+                      </td>
+                      <td className="py-3 px-4">
+                        {!row.has_personal_key && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => {
+                              setEditLimitUserId(row.user_id);
+                              setEditLimitValue(String(row.monthly_request_limit));
+                            }}
+                          >
+                            Edit Limit
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

@@ -33,16 +33,6 @@ logging.basicConfig(
 _parent = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_parent))
 
-# AppContext imports AuthManager which inherits QObject.
-# QObject needs a QCoreApplication — create a headless one for the API server.
-try:
-    from PyQt6.QtCore import QCoreApplication
-
-    _qt_app = QCoreApplication.instance()
-    if _qt_app is None:
-        _qt_app = QCoreApplication(sys.argv)
-except ImportError:
-    _qt_app = None  # PyQt6 not installed — AuthManager won't work but that's OK
 from fastapi.responses import JSONResponse
 
 from MythosEngine.config.config import Config
@@ -53,7 +43,9 @@ from server.middleware.logging import LoggingMiddleware
 from server.routes import (
     admin_analytics,
     ai,
+    ai_settings,
     auth,
+    campaigns,
     characters,
     dashboard,
     debug,
@@ -201,11 +193,13 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 # ── Routers ───────────────────────────────────────────────────────────────────
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
+app.include_router(campaigns.router, prefix="/campaigns", tags=["campaigns"])
 app.include_router(notes.router, prefix="/notes", tags=["notes"])
 app.include_router(sessions.router, prefix="/sessions", tags=["sessions"])
 app.include_router(maps.router, prefix="/maps", tags=["maps"])
 app.include_router(characters.router, prefix="/characters", tags=["characters"])
 app.include_router(ai.router)
+app.include_router(ai_settings.router)
 app.include_router(dashboard.router)
 app.include_router(settings.router)
 app.include_router(users.router, prefix="/users", tags=["users"])

@@ -5,15 +5,14 @@ AuthManager — single point of entry for all authentication operations.
 Consolidates login, logout, and auto-login so callers (main.py, logout button)
 never need to touch session_token.py or bcrypt directly.
 
-Emits a Qt signal `session_ended` when logout completes so that main.py /
-LoreMainApp can react (hide the window, show LoginDialog, etc.).
+Calls all callbacks registered on `session_ended` when logout completes so that
+main.py / LoreMainApp can react (hide the window, show LoginDialog, etc.).
 """
 
 import logging
 from typing import Optional
 
 import bcrypt
-from PyQt6.QtCore import QObject, pyqtSignal
 
 from MythosEngine.auth.session_manager import SessionManager
 from MythosEngine.models.user import User
@@ -21,7 +20,27 @@ from MythosEngine.models.user import User
 logger = logging.getLogger(__name__)
 
 
-class AuthManager(QObject):
+class _SimpleSignal:
+    """Minimal callable-list that mirrors pyqtSignal's connect/emit/disconnect API."""
+
+    def __init__(self):
+        self._callbacks = []
+
+    def connect(self, callback):
+        self._callbacks.append(callback)
+
+    def disconnect(self, callback=None):
+        if callback is None:
+            self._callbacks.clear()
+        else:
+            self._callbacks.remove(callback)
+
+    def emit(self):
+        for cb in self._callbacks:
+            cb()
+
+
+class AuthManager:
     """
     Owns the complete auth lifecycle: login, auto-login, logout.
 
@@ -33,13 +52,11 @@ class AuthManager(QObject):
         Injected so callers can share a single SessionManager instance.
     """
 
-    # Emitted after a successful logout so the app can return to LoginDialog.
-    session_ended = pyqtSignal()
-
-    def __init__(self, storage, session_mgr: SessionManager, parent=None) -> None:
-        super().__init__(parent)
+    def __init__(self, storage, session_mgr: SessionManager) -> None:
         self._storage = storage
         self._sessions = session_mgr
+        # Emitted after a successful logout so the app can return to LoginDialog.
+        self.session_ended = _SimpleSignal()
 
     # ── Login ─────────────────────────────────────────────────────────────
 
@@ -88,7 +105,7 @@ class AuthManager(QObject):
 
     def logout(self, user_id: Optional[str] = None) -> None:
         """
-        Revoke the current session and emit session_ended.
+        Revoke the current session and fire session_ended callbacks.
 
         Parameters
         ----------

@@ -40,7 +40,8 @@ class MarkerItem(BaseModel):
 
 class MapListItem(BaseModel):
     id: str
-    vault_id: str
+    campaign_id: str = ""  # preferred
+    vault_id: str  # deprecated alias for campaign_id
     name: str
     map_type: str
     description: str
@@ -53,7 +54,8 @@ class MapListItem(BaseModel):
 
 class MapDetail(BaseModel):
     id: str
-    vault_id: str
+    campaign_id: str = ""  # preferred
+    vault_id: str  # deprecated alias for campaign_id
     owner_id: str
     name: str
     map_type: str
@@ -68,7 +70,8 @@ class MapDetail(BaseModel):
 
 class CreateMapRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
-    vault_id: Optional[str] = Field(default=None, max_length=100)
+    campaign_id: Optional[str] = Field(default=None, max_length=100)
+    vault_id: Optional[str] = Field(default=None, max_length=100)  # deprecated alias for campaign_id
     map_type: str = Field("region", max_length=50)
     description: str = Field("", max_length=10_000)
     image_path: str = Field("", max_length=1000)
@@ -91,9 +94,11 @@ class UpdateMapRequest(BaseModel):
 
 
 def _map_to_list_item(m: Map) -> MapListItem:
+    effective_id = getattr(m, "campaign_id", None) or getattr(m, "vault_id", "") or ""
     return MapListItem(
         id=m.id,
-        vault_id=m.vault_id,
+        campaign_id=effective_id,
+        vault_id=effective_id,  # deprecated: mirrors campaign_id
         name=m.name,
         map_type=m.map_type,
         description=m.description or "",
@@ -106,9 +111,11 @@ def _map_to_list_item(m: Map) -> MapListItem:
 
 
 def _map_to_detail(m: Map) -> MapDetail:
+    effective_id = getattr(m, "campaign_id", None) or getattr(m, "vault_id", "") or ""
     return MapDetail(
         id=m.id,
-        vault_id=m.vault_id,
+        campaign_id=effective_id,
+        vault_id=effective_id,  # deprecated: mirrors campaign_id
         owner_id=m.owner_id,
         name=m.name,
         map_type=m.map_type,
@@ -141,17 +148,21 @@ def _tags_str_to_list(tags: str) -> List[str]:
 
 @router.get("/")
 async def list_maps(
-    vault_id: Optional[str] = Query(None, description="Vault to list maps for"),
+    campaign_id: Optional[str] = Query(None, description="Campaign ID (preferred)"),
+    vault_id: Optional[str] = Query(None, description="Deprecated: use campaign_id instead"),
     type: Optional[str] = Query(None, description="Filter by map_type"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     ctx=Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """List maps for a vault, optionally filtered by type."""
+    """List maps for a campaign, optionally filtered by type.
+
+    campaign_id is preferred; vault_id is a deprecated alias.
+    """
     try:
-        vault_id = resolve_vault(ctx, user, vault_id).id
-        all_maps = ctx.storage.list_maps(vault_id=vault_id, map_type=type)
+        effective_id = campaign_id or (resolve_vault(ctx, user, vault_id).id if vault_id else None)
+        all_maps = ctx.storage.list_maps(campaign_id=effective_id, map_type=type)
         all_maps.sort(key=lambda m: m.last_modified, reverse=True)
         total = len(all_maps)
         page = all_maps[skip : skip + limit]
@@ -186,11 +197,14 @@ async def create_map(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """Create a new map."""
+    """Create a new map.
+
+    campaign_id is preferred; vault_id is a deprecated alias.
+    """
     try:
-        vault_id = resolve_vault(ctx, user, req.vault_id).id
+        effective_id = req.campaign_id or (resolve_vault(ctx, user, req.vault_id).id if req.vault_id else "default")
         m = ctx.maps.create_map(
-            vault_id=vault_id,
+            vault_id=effective_id,
             owner_id=user.id,
             name=req.name,
             file_path=req.image_path,

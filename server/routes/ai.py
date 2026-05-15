@@ -127,6 +127,41 @@ def _parse_comma_list(raw: str) -> list[str]:
     return items
 
 
+def _get_ai_for_user(user_id: str, ctx: AppContext):
+    """
+    Return an AI engine instance appropriate for this user.
+
+    - If the user has a personal OpenAI key stored, create a fresh engine
+      instance using that key (no quota consumed).
+    - Otherwise check + increment the user's monthly server-key quota, then
+      return the shared ctx.ai engine.
+
+    Raises HTTP 503 if no AI engine is configured, or HTTP 429 if the
+    server-key quota is exceeded.
+    """
+    if not ctx.has_ai():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI engine not available",
+        )
+
+    store = getattr(ctx.storage, "user_api_keys", None)
+
+    if store is not None:
+        personal_key = store.get_personal_key(user_id)
+        if personal_key:
+            from MythosEngine.ai.core.openai_engine import OpenaiAI
+
+            user_ai = OpenaiAI(ctx.config)
+            user_ai.update_api_key(personal_key)
+            return user_ai
+
+        # No personal key — check and increment server-key quota (raises 429 if over limit)
+        store.check_and_increment(user_id)
+
+    return ctx.require_ai()
+
+
 # ============================================================================
 # Endpoints
 # ============================================================================
@@ -183,15 +218,8 @@ async def ask(
 ):
     """Ask the AI with optional conversation history. Applies PREFERRED_MODEL if set."""
     try:
-        if not ctx.has_ai():
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="AI engine not available",
-            )
-
         _apply_preferred_model(ctx)
-
-        ai = ctx.require_ai()
+        ai = _get_ai_for_user(str(user.id), ctx)
         full_prompt = _build_prompt_with_history(req.prompt, req.history)
         ctx.analytics.track("ai.request_sent", user_id=user.id, data={"operation": "ask"})
         response, prompt_tokens, completion_tokens = ai.ask(full_prompt)
@@ -224,15 +252,14 @@ async def stream_ask(
     user: User = Depends(get_current_user),
 ):
     """Streaming SSE version of /ai/ask. Yields tokens word-by-word."""
+    # Resolve the AI client and check quota before entering the generator
+    try:
+        ai = _get_ai_for_user(str(user.id), ctx)
+    except HTTPException:
+        raise
+
     async def generate():
         try:
-            if not ctx.has_ai():
-                yield f"data: {json.dumps({'error': 'AI engine not available'})}\n\n"
-                return
-
-            _apply_preferred_model(ctx)
-
-            ai = ctx.require_ai()
             full_prompt = _build_prompt_with_history(req.prompt, req.history)
             response, _, _ = ai.ask(full_prompt)
 
@@ -258,13 +285,7 @@ async def summarize(
 ):
     """Summarize the provided text."""
     try:
-        if not ctx.has_ai():
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="AI engine not available",
-            )
-
-        ai = ctx.require_ai()
+        ai = _get_ai_for_user(str(user.id), ctx)
         summary, prompt_tokens, completion_tokens = ai.summarize(req.text)
 
         return SummarizeResponse(
@@ -291,13 +312,7 @@ async def suggest_tags(
 ):
     """Suggest tags for text, filtering out existing ones."""
     try:
-        if not ctx.has_ai():
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="AI engine not available",
-            )
-
-        ai = ctx.require_ai()
+        ai = _get_ai_for_user(str(user.id), ctx)
         raw_tags, prompt_tokens, completion_tokens = ai.suggest_tags(req.text)
 
         # AI returns comma-separated string — parse to list
@@ -331,13 +346,7 @@ async def propose_links(
 ):
     """Suggest internal [[wiki links]] for the given note content."""
     try:
-        if not ctx.has_ai():
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="AI engine not available",
-            )
-
-        ai = ctx.require_ai()
+        ai = _get_ai_for_user(str(user.id), ctx)
         raw_links, prompt_tokens, completion_tokens = ai.propose_links(
             req.text, req.note_names
         )
