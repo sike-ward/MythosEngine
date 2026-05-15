@@ -31,7 +31,8 @@ router = APIRouter()
 
 class CharacterResponse(BaseModel):
     id: str
-    vault_id: str
+    campaign_id: str = ""  # preferred
+    vault_id: str  # deprecated alias for campaign_id
     name: str
     char_type: str
     race: str = ""
@@ -57,7 +58,8 @@ class CreateCharacterRequest(BaseModel):
     backstory: str = Field("", max_length=10_000)
     ai_memory: str = Field("", max_length=50_000)
     note_ids: List[str] = []
-    vault_id: Optional[str] = Field(default=None, max_length=100)
+    campaign_id: Optional[str] = Field(default=None, max_length=100)
+    vault_id: Optional[str] = Field(default=None, max_length=100)  # deprecated alias for campaign_id
 
 
 class UpdateCharacterRequest(BaseModel):
@@ -77,9 +79,11 @@ class UpdateCharacterRequest(BaseModel):
 
 def _to_response(char: Character) -> CharacterResponse:
     meta = getattr(char, "meta", {}) or {}
+    effective_id = getattr(char, "campaign_id", None) or getattr(char, "vault_id", "default") or "default"
     return CharacterResponse(
         id=char.id,
-        vault_id=getattr(char, "vault_id", "default"),
+        campaign_id=effective_id,
+        vault_id=effective_id,  # deprecated: mirrors campaign_id
         name=char.name,
         char_type="npc" if getattr(char, "is_npc", False) else "player",
         race=str(meta.get("race", "")),
@@ -109,17 +113,22 @@ def _get_character_or_404(ctx: AppContext, user: User, char_id: str) -> Characte
 
 @router.get("/")
 async def list_characters(
-    vault_id: Optional[str] = Query(None),
+    campaign_id: Optional[str] = Query(None, description="Campaign ID (preferred)"),
+    vault_id: Optional[str] = Query(None, description="Deprecated: use campaign_id instead"),
     type: Optional[str] = Query(None, description="player or npc"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """List characters filtered by vault and optionally type."""
+    """List characters filtered by campaign and optionally type.
+
+    campaign_id is preferred; vault_id is a deprecated alias.
+    """
     try:
-        vault_id = resolve_vault(ctx, user, vault_id).id
-        all_chars = ctx.storage.list_characters(vault_id=vault_id, char_type=type)
+        # If no campaign_id, fall back to vault resolution for backward compat
+        effective_id = campaign_id or (resolve_vault(ctx, user, vault_id).id if vault_id else None)
+        all_chars = ctx.storage.list_characters(campaign_id=effective_id, char_type=type)
         total = len(all_chars)
         page = all_chars[skip : skip + limit]
         return {"items": [_to_response(c).model_dump() for c in page], "total": total}
@@ -144,12 +153,16 @@ async def create_character(
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    """Create a new character."""
+    """Create a new character.
+
+    campaign_id is preferred; vault_id is a deprecated alias.
+    """
     try:
-        vault_id = resolve_vault(ctx, user, req.vault_id).id
+        # campaign_id takes precedence; vault_id is a deprecated alias
+        effective_id = req.campaign_id or (resolve_vault(ctx, user, req.vault_id).id if req.vault_id else "default")
         char = Character(
             id=str(uuid.uuid4()),
-            vault_id=vault_id,
+            vault_id=effective_id,  # kept for backward compat on the model
             owner_id=user.id,
             name=req.name,
             description=req.backstory or None,
@@ -159,6 +172,11 @@ async def create_character(
             meta={"race": req.race, "class": req.char_class, "level": req.level},
             ai_memory=req.ai_memory or None,
         )
+        # Store campaign_id on the model if the field exists
+        try:
+            char.campaign_id = effective_id  # type: ignore[attr-defined]
+        except AttributeError:
+            pass
         ctx.storage.save_character(char)
         return _to_response(char)
     except Exception as exc:

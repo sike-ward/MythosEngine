@@ -18,14 +18,29 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 @router.get("/stats")
 def stats(
-    vault_id: str = Query(default=""),
+    campaign_id: str = "",
+    vault_id: str = Query(default=""),  # deprecated alias for campaign_id
     ctx: AppContext = Depends(get_ctx),
     _user: User = Depends(get_current_user),
 ):
-    notes_count = ctx.storage.count_notes(vault_id=vault_id)
+    """Return content counts. Scoped by campaign_id when provided (vault_id is deprecated)."""
+    effective_id = campaign_id or vault_id or ""
+
+    notes_count = ctx.storage.count_notes(vault_id=effective_id)
     folders = ctx.storage.list_folders(vault_id=vault_id)
-    characters = len(ctx.storage.list_characters(vault_id=vault_id))
-    _, sessions_total = ctx.storage.list_session_logs(vault_id=vault_id)
+    characters = len(ctx.storage.list_characters(campaign_id=effective_id or None, vault_id=vault_id))
+
+    sessions_total = 0
+    if effective_id and hasattr(ctx.storage, "list_play_sessions"):
+        try:
+            _, sessions_total = ctx.storage.list_play_sessions(effective_id, limit=0)
+        except Exception:
+            sessions_total = 0
+    if not sessions_total:
+        try:
+            _, sessions_total = ctx.storage.list_session_logs(vault_id=vault_id)
+        except Exception:
+            sessions_total = _count_meta(ctx, "sessions")
     timeline_events = _count_timeline(ctx)
 
     return {
@@ -64,6 +79,21 @@ def recent(
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _count_meta(ctx: AppContext, subfolder: str) -> int:
+    """Count JSON files in a .dnd_meta subfolder (HybridStorage / SQLiteBackend)."""
+    try:
+        from pathlib import Path
+
+        vault_path = getattr(ctx.storage, "vault_path", None)
+        if vault_path:
+            d = Path(vault_path) / ".dnd_meta" / subfolder
+            if d.is_dir():
+                return len(list(d.glob("*.json")))
+    except Exception:
+        pass
+    return 0
 
 
 def _count_timeline(ctx: AppContext) -> int:

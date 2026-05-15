@@ -30,7 +30,7 @@ from typing import Any, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, create_engine, select
+from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, create_engine, or_, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from MythosEngine.core.event_bus import get_event_bus
@@ -128,6 +128,7 @@ class NoteRecord(Base):
     title: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")
     content: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")
     tags: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default="")
+    campaign_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
 
 
 class CharacterRecord(Base):
@@ -138,6 +139,7 @@ class CharacterRecord(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     vault_id: Mapped[str] = mapped_column(String(36), nullable=False, default="", server_default="")
+    campaign_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
 
 
@@ -149,6 +151,7 @@ class MapRecord(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     vault_id: Mapped[str] = mapped_column(String(36), nullable=False, default="", server_default="")
+    campaign_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
 
 
@@ -300,6 +303,7 @@ class SQLiteBackend(StorageBackend):
         raw_conn = self.engine.raw_connection()
         try:
             self._setup_fts(raw_conn)
+            self._setup_campaign_columns(raw_conn)
             raw_conn.commit()
             self._fts_available = True
         except Exception as exc:
@@ -372,6 +376,18 @@ class SQLiteBackend(StorageBackend):
                 DELETE FROM notes_fts WHERE id=old.id;
             END
         """)
+
+    def _setup_campaign_columns(self, conn) -> None:
+        """Add campaign_id column to characters, maps, and notes if not already present."""
+        for statement in (
+            "ALTER TABLE characters ADD COLUMN campaign_id TEXT",
+            "ALTER TABLE maps ADD COLUMN campaign_id TEXT",
+            "ALTER TABLE notes ADD COLUMN campaign_id TEXT",
+        ):
+            try:
+                conn.execute(statement)
+            except Exception:
+                pass  # column already exists
 
     def _dnd_meta_path(self, subfolder: str, obj_id: str) -> Path:
         """Return the JSON path for a model object's metadata, creating dir if needed."""
@@ -792,27 +808,36 @@ class SQLiteBackend(StorageBackend):
         tag: str = "",
         skip: int = 0,
         limit: int = 0,
-        vault_id: str = "",
+        vault_id: str = "",  # deprecated alias for campaign_id
+        campaign_id: Optional[str] = None,
     ) -> List[Note]:
         """List notes directly from the SQLite database (not file-system based).
 
         This is the authoritative listing method for notes created via the API.
         File-based notes (legacy .md files) are NOT returned here; use
         ``search_notes("")`` for those.
+
+        vault_id is a deprecated alias for campaign_id and will be removed in a future release.
         """
+        filter_id = campaign_id or vault_id or ""
         results: List[Note] = []
         with self._session() as session:
             q = session.query(NoteRecord).filter(NoteRecord.is_deleted != True)  # noqa: E712
-            if vault_id:
-                q = q.filter(NoteRecord.vault_id == vault_id)
+            if filter_id:
+                # Prefer campaign_id column; fall back to vault_id column for legacy rows
+                q = q.filter(
+                    or_(NoteRecord.campaign_id == filter_id, NoteRecord.vault_id == filter_id)
+                )
             if folder:
                 q = q.filter(NoteRecord.folder == folder)
             records = q.order_by(NoteRecord.created_at.desc()).all()
             for record in records:
                 try:
                     note = Note.model_validate_json(record.data)
-                    if vault_id and getattr(note, "vault_id", "") != vault_id:
-                        continue
+                    if filter_id:
+                        note_cid = getattr(note, "campaign_id", "") or getattr(note, "vault_id", "")
+                        if note_cid != filter_id:
+                            continue
                     if getattr(note, "vault_id", "") and not self._has_vault_access(note.vault_id):
                         continue
                     if not self._can_access(note.owner_id, note.permissions or {}):
@@ -971,13 +996,15 @@ class SQLiteBackend(StorageBackend):
     def save_character(self, character: Character) -> None:
         """Save or update a Character record."""
         vault_id = getattr(character, "vault_id", "") or ""
+        campaign_id = getattr(character, "campaign_id", None) or vault_id or ""
         with self._session() as session:
             record = session.query(CharacterRecord).filter(CharacterRecord.id == character.id).first()
             if record:
-                record.vault_id = vault_id
+                record.vault_id = vault_id or record.vault_id
+                record.campaign_id = campaign_id or record.campaign_id
                 record.data = character.model_dump_json()
             else:
-                record = CharacterRecord(id=character.id, vault_id=vault_id, data=character.model_dump_json())
+                record = CharacterRecord(id=character.id, vault_id=vault_id, campaign_id=campaign_id, data=character.model_dump_json())
                 session.add(record)
             session.commit()
 
@@ -995,13 +1022,24 @@ class SQLiteBackend(StorageBackend):
             session.query(CharacterRecord).filter(CharacterRecord.id == character_id).delete()
             session.commit()
 
-    def list_characters(self, vault_id: str = "", char_type: Optional[str] = None) -> List[Character]:
-        """List non-deleted characters, optionally filtered by vault_id and char_type ('player'|'npc')."""
+    def list_characters(
+        self,
+        vault_id: str = "",  # deprecated alias for campaign_id
+        campaign_id: Optional[str] = None,
+        char_type: Optional[str] = None,
+    ) -> List[Character]:
+        """List non-deleted characters, optionally filtered by campaign_id and char_type ('player'|'npc').
+
+        vault_id is a deprecated alias for campaign_id and will be removed in a future release.
+        """
+        filter_id = campaign_id or vault_id or ""
         results: List[Character] = []
         with self._session() as session:
             q = session.query(CharacterRecord)
-            if vault_id:
-                q = q.filter(CharacterRecord.vault_id == vault_id)
+            if filter_id:
+                q = q.filter(
+                    or_(CharacterRecord.campaign_id == filter_id, CharacterRecord.vault_id == filter_id)
+                )
             for rec in q.all():
                 try:
                     char = Character.model_validate_json(rec.data)
@@ -1033,13 +1071,15 @@ class SQLiteBackend(StorageBackend):
     def save_map(self, map_obj: Map) -> None:
         """Save or update a Map record."""
         vault_id = getattr(map_obj, "vault_id", "") or ""
+        campaign_id = getattr(map_obj, "campaign_id", None) or vault_id or ""
         with self._session() as session:
             record = session.query(MapRecord).filter(MapRecord.id == map_obj.id).first()
             if record:
-                record.vault_id = vault_id
+                record.vault_id = vault_id or record.vault_id
+                record.campaign_id = campaign_id or record.campaign_id
                 record.data = map_obj.model_dump_json()
             else:
-                record = MapRecord(id=map_obj.id, vault_id=vault_id, data=map_obj.model_dump_json())
+                record = MapRecord(id=map_obj.id, vault_id=vault_id, campaign_id=campaign_id, data=map_obj.model_dump_json())
                 session.add(record)
             session.commit()
 
@@ -1057,11 +1097,24 @@ class SQLiteBackend(StorageBackend):
             session.query(MapRecord).filter(MapRecord.id == map_id).delete()
             session.commit()
 
-    def list_maps(self, vault_id: str, map_type: Optional[str] = None) -> List[Map]:
-        """Return all non-deleted Maps for a vault, optionally filtered by map_type."""
+    def list_maps(
+        self,
+        vault_id: str = "",  # deprecated alias for campaign_id
+        campaign_id: Optional[str] = None,
+        map_type: Optional[str] = None,
+    ) -> List[Map]:
+        """Return all non-deleted Maps, optionally filtered by campaign_id and map_type.
+
+        vault_id is a deprecated alias for campaign_id and will be removed in a future release.
+        """
+        filter_id = campaign_id or vault_id or ""
         results: List[Map] = []
         with self._session() as session:
-            q = session.query(MapRecord).filter(MapRecord.vault_id == vault_id)
+            q = session.query(MapRecord)
+            if filter_id:
+                q = q.filter(
+                    or_(MapRecord.campaign_id == filter_id, MapRecord.vault_id == filter_id)
+                )
             for record in q.all():
                 try:
                     map_obj = Map.model_validate_json(record.data)
@@ -1765,3 +1818,347 @@ class SQLiteBackend(StorageBackend):
                 except Exception:
                     pass
         return codes
+
+    # ========================================================================
+    # Campaigns (new schema — tables created by migration 0005)
+    # ========================================================================
+
+    def _re_sub_slug(self, name: str) -> str:
+        return re.sub(r"[^A-Za-z0-9]+", "-", name.lower()).strip("-") or "campaign"
+
+    def create_campaign(
+        self,
+        group_id: str,
+        owner_user_id: str,
+        name: str,
+        description: str = "",
+        system: str = "",
+    ) -> dict:
+        """Create a new campaign in the given group. Returns the campaign dict."""
+        campaign_id = str(uuid.uuid4())
+        slug = self._re_sub_slug(name)
+        now = datetime.utcnow()
+        try:
+            from sqlalchemy import text as _text
+            with self.engine.connect() as conn:
+                conn.execute(
+                    _text(
+                        "INSERT INTO campaigns "
+                        "(id, group_id, name, slug, description, system, status, "
+                        "created_by_user_id, created_at, updated_at) VALUES "
+                        "(:id, :gid, :name, :slug, :desc, :sys, 'active', :uid, :now, :now)"
+                    ),
+                    dict(id=campaign_id, gid=group_id, name=name, slug=slug,
+                         desc=description or "", sys=system or "", uid=owner_user_id, now=now),
+                )
+                conn.commit()
+        except Exception as exc:
+            logger.warning("create_campaign failed: %s", exc)
+        return self.get_campaign(campaign_id) or {"id": campaign_id, "group_id": group_id, "name": name}
+
+    def _campaign_row_to_dict(self, row) -> dict:
+        return {
+            "id": row[0],
+            "group_id": row[1],
+            "name": row[2],
+            "slug": row[3],
+            "description": row[4] or "",
+            "system": row[5] or "",
+            "status": row[6] or "active",
+            "created_by_user_id": row[7] or "",
+            "created_at": row[8].isoformat() if row[8] else None,
+            "updated_at": row[9].isoformat() if row[9] else None,
+            "deleted_at": row[10].isoformat() if row[10] else None,
+        }
+
+    def get_campaign(self, campaign_id: str) -> Optional[dict]:
+        """Fetch a single campaign by ID; returns None if not found or deleted."""
+        try:
+            from sqlalchemy import text as _text
+            with self.engine.connect() as conn:
+                row = conn.execute(
+                    _text(
+                        "SELECT id, group_id, name, slug, description, system, status, "
+                        "created_by_user_id, created_at, updated_at, deleted_at "
+                        "FROM campaigns WHERE id = :id AND deleted_at IS NULL"
+                    ),
+                    {"id": campaign_id},
+                ).fetchone()
+            if row:
+                return self._campaign_row_to_dict(row)
+        except Exception as exc:
+            logger.warning("get_campaign failed: %s", exc)
+        return None
+
+    def list_campaigns_for_group(self, group_id: str) -> List[dict]:
+        """Return all active campaigns for a group, ordered by name."""
+        try:
+            from sqlalchemy import text as _text
+            with self.engine.connect() as conn:
+                rows = conn.execute(
+                    _text(
+                        "SELECT id, group_id, name, slug, description, system, status, "
+                        "created_by_user_id, created_at, updated_at, deleted_at "
+                        "FROM campaigns WHERE group_id = :gid AND deleted_at IS NULL "
+                        "ORDER BY name"
+                    ),
+                    {"gid": group_id},
+                ).fetchall()
+            return [self._campaign_row_to_dict(r) for r in rows]
+        except Exception as exc:
+            logger.warning("list_campaigns_for_group failed: %s", exc)
+            return []
+
+    def add_campaign_member(self, campaign_id: str, user_id: str, role: str = "player") -> dict:
+        """Add or update a user's role in a campaign. Returns the membership dict."""
+        member_id = str(uuid.uuid4())
+        now = datetime.utcnow()
+        try:
+            from sqlalchemy import text as _text
+            with self.engine.connect() as conn:
+                # Upsert: delete existing then insert (SQLite lacks ON CONFLICT UPDATE cleanly)
+                conn.execute(
+                    _text("DELETE FROM campaign_members WHERE campaign_id = :cid AND user_id = :uid"),
+                    {"cid": campaign_id, "uid": user_id},
+                )
+                conn.execute(
+                    _text(
+                        "INSERT INTO campaign_members (id, campaign_id, user_id, role, joined_at, created_at) "
+                        "VALUES (:id, :cid, :uid, :role, :now, :now)"
+                    ),
+                    {"id": member_id, "cid": campaign_id, "uid": user_id, "role": role, "now": now},
+                )
+                conn.commit()
+        except Exception as exc:
+            logger.warning("add_campaign_member failed: %s", exc)
+        return {"campaign_id": campaign_id, "user_id": user_id, "role": role}
+
+    def list_campaign_members(self, campaign_id: str) -> List[dict]:
+        """Return all members of a campaign."""
+        try:
+            from sqlalchemy import text as _text
+            with self.engine.connect() as conn:
+                rows = conn.execute(
+                    _text(
+                        "SELECT id, campaign_id, user_id, role, joined_at "
+                        "FROM campaign_members WHERE campaign_id = :cid"
+                    ),
+                    {"cid": campaign_id},
+                ).fetchall()
+            return [
+                {"id": r[0], "campaign_id": r[1], "user_id": r[2], "role": r[3],
+                 "joined_at": r[4].isoformat() if r[4] else None}
+                for r in rows
+            ]
+        except Exception as exc:
+            logger.warning("list_campaign_members failed: %s", exc)
+            return []
+
+    # ========================================================================
+    # Group Members (new schema — table created by migration 0005)
+    # ========================================================================
+
+    def add_group_member(self, group_id: str, user_id: str, role: str = "member") -> dict:
+        """Add or update a user's role in a group via the group_members join table."""
+        member_id = str(uuid.uuid4())
+        now = datetime.utcnow()
+        try:
+            from sqlalchemy import text as _text
+            with self.engine.connect() as conn:
+                conn.execute(
+                    _text("DELETE FROM group_members WHERE group_id = :gid AND user_id = :uid"),
+                    {"gid": group_id, "uid": user_id},
+                )
+                conn.execute(
+                    _text(
+                        "INSERT INTO group_members (id, group_id, user_id, role, joined_at) "
+                        "VALUES (:id, :gid, :uid, :role, :now)"
+                    ),
+                    {"id": member_id, "gid": group_id, "uid": user_id, "role": role, "now": now},
+                )
+                conn.commit()
+        except Exception as exc:
+            logger.warning("add_group_member failed: %s", exc)
+        return {"group_id": group_id, "user_id": user_id, "role": role}
+
+    def list_group_members(self, group_id: str) -> List[dict]:
+        """Return all members of a group from the group_members table."""
+        try:
+            from sqlalchemy import text as _text
+            with self.engine.connect() as conn:
+                rows = conn.execute(
+                    _text(
+                        "SELECT id, group_id, user_id, role, joined_at "
+                        "FROM group_members WHERE group_id = :gid"
+                    ),
+                    {"gid": group_id},
+                ).fetchall()
+            return [
+                {"id": r[0], "group_id": r[1], "user_id": r[2], "role": r[3],
+                 "joined_at": r[4].isoformat() if r[4] else None}
+                for r in rows
+            ]
+        except Exception as exc:
+            logger.warning("list_group_members failed: %s", exc)
+            return []
+
+    def list_groups_for_user(self, user_id: str) -> List[dict]:
+        """Return all groups a user belongs to (via group_members table)."""
+        try:
+            from sqlalchemy import text as _text
+            with self.engine.connect() as conn:
+                rows = conn.execute(
+                    _text(
+                        "SELECT gm.group_id, gm.role, gm.joined_at, "
+                        "g.name, g.owner_id "
+                        "FROM group_members gm "
+                        "JOIN groups g ON g.id = gm.group_id "
+                        "WHERE gm.user_id = :uid"
+                    ),
+                    {"uid": user_id},
+                ).fetchall()
+            return [
+                {"group_id": r[0], "role": r[1],
+                 "joined_at": r[2].isoformat() if r[2] else None,
+                 "name": r[3], "owner_id": r[4]}
+                for r in rows
+            ]
+        except Exception as exc:
+            logger.warning("list_groups_for_user failed: %s", exc)
+            return []
+
+    # ========================================================================
+    # Play Sessions (new schema — table created by migration 0005)
+    # ========================================================================
+
+    def _play_session_row_to_dict(self, row) -> dict:
+        return {
+            "id": row[0],
+            "campaign_id": row[1],
+            "created_by_user_id": row[2] or "",
+            "title": row[3] or "",
+            "session_number": row[4],
+            "session_date": str(row[5]) if row[5] else None,
+            "summary": row[6] or "",
+            "raw_notes": row[7] or "",
+            "ai_recap": row[8] or "",
+            "xp_gained": row[9] or 0,
+            "loot_notes": row[10] or "",
+            "status": row[11] or "planned",
+            "created_at": row[12].isoformat() if row[12] else None,
+            "updated_at": row[13].isoformat() if row[13] else None,
+        }
+
+    def save_play_session(self, campaign_id: str, data: dict) -> str:
+        """Create or update a play session. Returns the session ID."""
+        session_id = data.get("id") or str(uuid.uuid4())
+        now = datetime.utcnow()
+        try:
+            from sqlalchemy import text as _text
+            with self.engine.connect() as conn:
+                existing = conn.execute(
+                    _text("SELECT id FROM play_sessions WHERE id = :id"),
+                    {"id": session_id},
+                ).fetchone()
+                if existing:
+                    updatable = ["title", "session_number", "session_date", "summary",
+                                 "raw_notes", "ai_recap", "xp_gained", "loot_notes", "status"]
+                    sets = ", ".join(f"{f} = :{f}" for f in updatable if f in data)
+                    if sets:
+                        params = {f: data[f] for f in updatable if f in data}
+                        params["id"] = session_id
+                        params["now"] = now
+                        conn.execute(_text(f"UPDATE play_sessions SET {sets}, updated_at = :now WHERE id = :id"), params)
+                else:
+                    conn.execute(
+                        _text(
+                            "INSERT INTO play_sessions "
+                            "(id, campaign_id, created_by_user_id, title, session_number, "
+                            "session_date, summary, raw_notes, ai_recap, xp_gained, loot_notes, "
+                            "status, created_at, updated_at) VALUES "
+                            "(:id, :cid, :uid, :title, :snum, :sdate, :summary, :raw_notes, "
+                            ":ai_recap, :xp, :loot, :status, :now, :now)"
+                        ),
+                        {
+                            "id": session_id, "cid": campaign_id,
+                            "uid": data.get("created_by_user_id", ""),
+                            "title": data.get("title", ""),
+                            "snum": data.get("session_number"),
+                            "sdate": data.get("session_date"),
+                            "summary": data.get("summary", ""),
+                            "raw_notes": data.get("raw_notes", ""),
+                            "ai_recap": data.get("ai_recap", ""),
+                            "xp": data.get("xp_gained", 0),
+                            "loot": data.get("loot_notes", ""),
+                            "status": data.get("status", "planned"),
+                            "now": now,
+                        },
+                    )
+                conn.commit()
+        except Exception as exc:
+            logger.warning("save_play_session failed: %s", exc)
+        return session_id
+
+    def get_play_session(self, session_id: str, campaign_id: Optional[str] = None) -> Optional[dict]:
+        """Fetch a single play session; enforces campaign isolation if campaign_id is given."""
+        try:
+            from sqlalchemy import text as _text
+            sql = (
+                "SELECT id, campaign_id, created_by_user_id, title, session_number, "
+                "session_date, summary, raw_notes, ai_recap, xp_gained, loot_notes, "
+                "status, created_at, updated_at "
+                "FROM play_sessions WHERE id = :id AND deleted_at IS NULL"
+            )
+            params: dict = {"id": session_id}
+            if campaign_id:
+                sql += " AND campaign_id = :cid"
+                params["cid"] = campaign_id
+            with self.engine.connect() as conn:
+                row = conn.execute(_text(sql), params).fetchone()
+            if row:
+                return self._play_session_row_to_dict(row)
+        except Exception as exc:
+            logger.warning("get_play_session failed: %s", exc)
+        return None
+
+    def list_play_sessions(self, campaign_id: str, skip: int = 0, limit: int = 50) -> Tuple[List[dict], int]:
+        """Return play sessions for a campaign, sorted newest first."""
+        try:
+            from sqlalchemy import text as _text
+            with self.engine.connect() as conn:
+                total_row = conn.execute(
+                    _text("SELECT COUNT(*) FROM play_sessions WHERE campaign_id = :cid AND deleted_at IS NULL"),
+                    {"cid": campaign_id},
+                ).fetchone()
+                total = total_row[0] if total_row else 0
+                rows = conn.execute(
+                    _text(
+                        "SELECT id, campaign_id, created_by_user_id, title, session_number, "
+                        "session_date, summary, raw_notes, ai_recap, xp_gained, loot_notes, "
+                        "status, created_at, updated_at "
+                        "FROM play_sessions WHERE campaign_id = :cid AND deleted_at IS NULL "
+                        "ORDER BY session_date DESC, created_at DESC "
+                        "LIMIT :lim OFFSET :off"
+                    ),
+                    {"cid": campaign_id, "lim": limit, "off": skip},
+                ).fetchall()
+            return [self._play_session_row_to_dict(r) for r in rows], total
+        except Exception as exc:
+            logger.warning("list_play_sessions failed: %s", exc)
+            return [], 0
+
+    def delete_play_session(self, session_id: str, campaign_id: Optional[str] = None) -> None:
+        """Soft-delete a play session by setting deleted_at."""
+        try:
+            from sqlalchemy import text as _text
+            now = datetime.utcnow()
+            sql = "UPDATE play_sessions SET deleted_at = :now WHERE id = :id"
+            params: dict = {"now": now, "id": session_id}
+            if campaign_id:
+                sql += " AND campaign_id = :cid"
+                params["cid"] = campaign_id
+            with self.engine.connect() as conn:
+                conn.execute(_text(sql), params)
+                conn.commit()
+        except Exception as exc:
+            logger.warning("delete_play_session failed: %s", exc)
