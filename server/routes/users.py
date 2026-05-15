@@ -25,7 +25,7 @@ from pydantic import BaseModel, field_validator
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
 
-from server.deps import get_ctx, get_current_user, require_permission
+from server.deps import get_ctx, get_current_user, require_admin
 
 
 router = APIRouter()
@@ -115,7 +115,7 @@ def _get_creator_user(ctx: AppContext) -> Optional[User]:
 @router.get("/", response_model=List[UserListItem])
 async def list_users(
     ctx: AppContext = Depends(get_ctx),
-    admin: User = require_permission("admin"),
+    admin: User = Depends(require_admin),
 ):
     """
     List all users in the system. Requires admin role.
@@ -144,7 +144,7 @@ async def list_users(
 async def get_user(
     user_id: str,
     ctx: AppContext = Depends(get_ctx),
-    admin: User = require_permission("admin"),
+    admin: User = Depends(require_admin),
 ):
     """
     Get a single user by ID. Requires admin role.
@@ -170,7 +170,7 @@ async def update_user_roles(
     user_id: str,
     req: UpdateRolesRequest,
     ctx: AppContext = Depends(get_ctx),
-    admin: User = require_permission("admin"),
+    admin: User = Depends(require_admin),
 ):
     """
     Update user roles. Requires admin role.
@@ -222,7 +222,7 @@ async def update_user_roles(
 async def disable_user(
     user_id: str,
     ctx: AppContext = Depends(get_ctx),
-    admin: User = require_permission("admin"),
+    admin: User = Depends(require_admin),
 ):
     """
     Disable a user (prevent login). Requires admin role.
@@ -251,7 +251,7 @@ async def disable_user(
 async def enable_user(
     user_id: str,
     ctx: AppContext = Depends(get_ctx),
-    admin: User = require_permission("admin"),
+    admin: User = Depends(require_admin),
 ):
     """
     Enable a previously disabled user. Requires admin role.
@@ -281,7 +281,7 @@ async def reset_password(
     user_id: str,
     req: ResetPasswordRequest,
     ctx: AppContext = Depends(get_ctx),
-    admin: User = require_permission("admin"),
+    admin: User = Depends(require_admin),
 ):
     """
     Reset a user's password (admin action). Requires admin role.

@@ -65,30 +65,16 @@ def get_current_user(
 
     ctx.storage.set_user_context(
         user.id,
-        is_admin="admin" in (user.roles or []),
-        is_gm="gm" in (user.roles or []),
+        is_admin=user.system_role in ("owner", "admin"),
+        is_gm=False,
     )
     ctx.current_user_id = user.id
     return user
 
 
-def require_permission(permission: str):
-    """Dependency factory for route-level permission checks."""
-
-    def dependency(user: User = Depends(get_current_user)) -> User:
-        if permission not in (user.roles or []):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Missing permission: {permission}",
-            )
-        return user
-
-    return Depends(dependency)
-
-
 def require_admin(user: User = Depends(get_current_user)) -> User:
-    """Raises 403 if the current user does not have the 'admin' role."""
-    if "admin" not in user.roles:
+    """Raises 403 if the current user does not have admin-level access."""
+    if user.system_role not in ("owner", "admin"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required.",

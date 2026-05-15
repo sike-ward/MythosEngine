@@ -22,7 +22,7 @@ def _storage_list_vaults(ctx: AppContext) -> List[Vault]:
 def _first_owned_or_member(vaults: Iterable[Vault], user: User) -> Optional[Vault]:
     active = [v for v in vaults if getattr(v, "is_active", True)]
     for vault in active:
-        if vault.owner_id == user.id or user.id in (vault.members or []) or "admin" in (user.roles or []):
+        if vault.owner_id == user.id or user.id in (vault.members or []) or user.system_role in ("owner", "admin"):
             return vault
     return active[0] if active else None
 
@@ -51,8 +51,8 @@ def ensure_personal_vault(ctx: AppContext, user: User) -> Vault:
 def list_accessible_vaults(ctx: AppContext, user: User) -> List[Vault]:
     ctx.storage.set_user_context(
         user.id,
-        is_admin="admin" in (user.roles or []),
-        is_gm="gm" in (user.roles or []),
+        is_admin=user.system_role in ("owner", "admin"),
+        is_gm=False,
     )
     vaults = [v for v in _storage_list_vaults(ctx) if getattr(v, "is_active", True)]
     if vaults:

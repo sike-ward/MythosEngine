@@ -85,7 +85,7 @@ async def update_vault(
     user: User = Depends(get_current_user),
 ):
     vault = resolve_vault(ctx, user, vault_id)
-    if vault.owner_id != user.id and "admin" not in (user.roles or []):
+    if vault.owner_id != user.id and user.system_role not in ("owner", "admin"):
         raise HTTPException(status_code=403, detail="Only the owner or an admin can update this vault")
     if body.name is not None:
         vault.name = body.name
@@ -117,7 +117,7 @@ async def delete_vault(
     user: User = Depends(get_current_user),
 ):
     vault = resolve_vault(ctx, user, vault_id)
-    if vault.owner_id != user.id and "admin" not in (user.roles or []):
+    if vault.owner_id != user.id and user.system_role not in ("owner", "admin"):
         raise HTTPException(status_code=403, detail="Only the owner or an admin can delete this vault")
     ctx.vaults.delete_vault(vault_id, actor_id=user.id)
     return {"deleted": True, "id": vault_id}

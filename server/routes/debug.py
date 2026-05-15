@@ -31,7 +31,7 @@ _LOGS_DIR = Path(__file__).resolve().parent.parent.parent / "logs"
 
 
 def require_admin(user: User = Depends(get_current_user)) -> User:
-    if "admin" not in (user.roles or []):
+    if user.system_role not in ("owner", "admin"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required",

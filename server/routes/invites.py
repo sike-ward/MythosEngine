@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
-from server.deps import get_ctx, require_permission
+from server.deps import get_ctx, require_admin
 
 router = APIRouter()
 
@@ -67,7 +67,7 @@ class GenerateInviteByHoursRequest(BaseModel):
 @router.get("/", response_model=List[InviteListItem])
 async def list_invites(
     ctx: AppContext = Depends(get_ctx),
-    admin: User = require_permission("admin"),
+    admin: User = Depends(require_admin),
 ):
     """
     List all invite codes.
@@ -104,7 +104,7 @@ async def list_invites(
 async def generate_invite(
     body: GenerateInviteRequest,
     ctx: AppContext = Depends(get_ctx),
-    admin: User = require_permission("admin"),
+    admin: User = Depends(require_admin),
 ):
     """Generate a new invite code with ttl_days and max_uses. Requires admin role."""
     try:
@@ -131,7 +131,7 @@ async def generate_invite(
 async def generate_invite_by_hours(
     body: GenerateInviteByHoursRequest,
     ctx: AppContext = Depends(get_ctx),
-    admin: User = require_permission("admin"),
+    admin: User = Depends(require_admin),
 ):
     """Generate a new invite code with an optional expires_hours param. Requires admin role."""
     try:
@@ -159,7 +159,7 @@ async def generate_invite_by_hours(
 async def revoke_invite(
     code: str,
     ctx: AppContext = Depends(get_ctx),
-    admin: User = require_permission("admin"),
+    admin: User = Depends(require_admin),
 ):
     """
     Revoke an invite code (mark as inactive). Accepts the invite code string.

@@ -345,8 +345,8 @@ async def login(
         # Set user context on storage for permission checks
         ctx.storage.set_user_context(
             user.id,
-            is_admin="admin" in (user.roles or []),
-            is_gm="gm" in (user.roles or []),
+            is_admin=user.system_role in ("owner", "admin"),
+            is_gm=False,
         )
 
         # Update last_login

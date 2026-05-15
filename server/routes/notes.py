@@ -240,8 +240,8 @@ def _set_user_ctx(ctx: AppContext, user: User) -> None:
     """
     ctx.storage.set_user_context(
         user.id,
-        is_admin="admin" in (user.roles or []),
-        is_gm="gm" in (user.roles or []),
+        is_admin=user.system_role in ("owner", "admin"),
+        is_gm=False,
     )
 
 
@@ -649,7 +649,7 @@ async def delete_note(
         _set_user_ctx(ctx, user)
         note = _get_note_or_404(ctx, note_id)
 
-        is_admin = "admin" in (user.roles or [])
+        is_admin = user.system_role in ("owner", "admin")
         if note.owner_id != user.id and not is_admin:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -679,7 +679,7 @@ async def move_note(
         _set_user_ctx(ctx, user)
         note = _get_note_or_404(ctx, req.note_id)
 
-        is_admin = "admin" in (user.roles or [])
+        is_admin = user.system_role in ("owner", "admin")
         if note.owner_id != user.id and not is_admin:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -878,7 +878,7 @@ async def delete_folder(
                 detail="Folder not found",
             )
 
-        is_admin = "admin" in (user.roles or [])
+        is_admin = user.system_role in ("owner", "admin")
         if folder.owner_id != user.id and not is_admin:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
