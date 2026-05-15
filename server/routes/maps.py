@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.map import Map
 from MythosEngine.models.user import User
 from server.deps import get_ctx, get_current_user
@@ -182,7 +183,7 @@ async def get_map(
 @router.post("/", response_model=MapDetail)
 async def create_map(
     req: CreateMapRequest,
-    ctx=Depends(get_ctx),
+    ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
     """Create a new map."""
@@ -200,6 +201,7 @@ async def create_map(
         m.map_type = req.map_type
         m.markers = [marker.model_dump() for marker in req.markers]
         ctx.storage.save_map(m)
+        ctx.analytics.track("map.created", user_id=user.id, data={"map_type": req.map_type})
         return _map_to_detail(m)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create map: {e}")

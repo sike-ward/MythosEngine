@@ -167,6 +167,16 @@ class AppContext:
         """Return the CostTracker from the SQLite backend, or None if unavailable."""
         return getattr(self.storage, "cost_tracker", None)
 
+    @property
+    def analytics(self):
+        """Return the AnalyticsTracker (lazy-initialised, consent-gated)."""
+        if not hasattr(self, "_analytics"):
+            from MythosEngine.analytics.tracker import AnalyticsTracker
+
+            version = getattr(self.config, "VERSION", "1.0.0")
+            self._analytics = AnalyticsTracker(self.storage, version)
+        return self._analytics
+
     def has_ai(self) -> bool:
         """Return True if an AI engine has been wired up."""
         return self.ai is not None

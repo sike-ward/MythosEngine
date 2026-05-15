@@ -10,6 +10,7 @@ PUT /settings   — update settings (accepts lowercase or uppercase keys)
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
@@ -64,3 +65,29 @@ def update_settings(
             except AttributeError:
                 pass
     return get_settings(ctx=ctx, _user=_user)
+
+
+class ConsentRequest(BaseModel):
+    consent: bool
+
+
+@router.get("/analytics")
+def get_analytics_consent(
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Return the current user's analytics consent preference."""
+    consent = getattr(ctx.storage, "user_has_analytics_consent", lambda _: False)(user.id)
+    return {"consent": consent}
+
+
+@router.post("/analytics/consent")
+def set_analytics_consent(
+    body: ConsentRequest,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Set the current user's analytics consent preference."""
+    if hasattr(ctx.storage, "set_analytics_consent"):
+        ctx.storage.set_analytics_consent(user.id, body.consent)
+    return {"consent": body.consent}

@@ -10,6 +10,7 @@ import CampaignSettings from '@/components/settings/CampaignSettings';
 import HelpSettings from '@/components/settings/HelpSettings';
 import DebugSettings from '@/components/settings/DebugSettings';
 import AdminSettings from '@/components/settings/AdminSettings';
+import PrivacySettings from '@/components/settings/PrivacySettings';
 import { settings } from '@/api';
 import { getStoredTheme } from '@/theme';
 
@@ -113,6 +114,7 @@ export default function Settings({ user }) {
             <NavItem id="account" label="My Account" />
             <NavItem id="ai" label="AI Settings" />
             <NavItem id="campaign" label="Campaign" />
+            <NavItem id="privacy" label="Privacy" />
             <NavItem id="help" label="Help & About" />
             {isAdmin && <NavItem id="users" label="User Management" />}
             {isAdmin && <NavItem id="debug" label="Debug" />}
@@ -147,6 +149,7 @@ export default function Settings({ user }) {
               onSave={handleSaveCampaign}
             />
           )}
+          {activeTab === 'privacy' && <PrivacySettings />}
           {activeTab === 'help' && <HelpSettings />}
           {activeTab === 'users' && isAdmin && <AdminSettings />}
           {activeTab === 'debug' && isAdmin && <DebugSettings />}

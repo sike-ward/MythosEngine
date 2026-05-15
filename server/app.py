@@ -51,6 +51,7 @@ from server.deps import set_app_context
 from server.limiter import limiter
 from server.middleware.logging import LoggingMiddleware
 from server.routes import (
+    admin_analytics,
     ai,
     auth,
     characters,
@@ -174,6 +175,23 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
         request.url.path,
         traceback.format_exc(),
     )
+    # Track the route exception — never log request/response body.
+    try:
+        ctx = request.app.state.ctx
+        user_id = ""
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            from server.auth_utils import decode_jwt
+
+            payload = decode_jwt(auth_header.removeprefix("Bearer ").strip())
+            user_id = payload.get("sub", "") if isinstance(payload, dict) else ""
+        ctx.analytics.track(
+            "error.route_exception",
+            user_id=user_id,
+            data={"route": request.url.path, "status_code": 500},
+        )
+    except Exception:
+        pass
     return JSONResponse(
         status_code=500,
         content={"detail": "An internal server error occurred. See the server log for details."},
@@ -196,6 +214,7 @@ app.include_router(vaults.router, prefix="/vaults", tags=["vaults"])
 app.include_router(groups.router, prefix="/groups", tags=["groups"])
 app.include_router(ws.router, tags=["ws"])
 app.include_router(debug.router, prefix="/debug", tags=["debug"])
+app.include_router(admin_analytics.router)
 
 
 # ── Health check ─────────────────────────────────────────────────────────────

@@ -572,7 +572,7 @@ async def create_note(
             note.meta = req.meta
             ctx.notes.update_note(note, actor_id=user.id)
         await hub.publish_note_saved(vault_id, _note_to_detail(note).model_dump(mode="json"))
-
+        ctx.analytics.track("note.created", user_id=user.id)
         return _note_to_detail(note)
     except Exception as e:
         raise HTTPException(
@@ -657,6 +657,7 @@ async def delete_note(
             )
 
         ctx.storage.soft_delete_note(note_id)
+        ctx.analytics.track("note.deleted", user_id=user.id)
         return {"deleted": True, "path": note_id}
     except HTTPException:
         raise
