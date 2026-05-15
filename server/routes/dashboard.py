@@ -7,7 +7,7 @@ GET /dashboard/stats  — note/character/session counts
 GET /dashboard/recent — most-recently-modified notes
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
@@ -19,36 +19,28 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 @router.get("/stats")
 def stats(
     campaign_id: str = "",
-    vault_id: str = "",  # deprecated alias for campaign_id
+    vault_id: str = Query(default=""),  # deprecated alias for campaign_id
     ctx: AppContext = Depends(get_ctx),
     _user: User = Depends(get_current_user),
 ):
     """Return content counts. Scoped by campaign_id when provided (vault_id is deprecated)."""
     effective_id = campaign_id or vault_id or ""
 
-    # Characters — query DB directly when an ID is given
-    if effective_id and hasattr(ctx.storage, "list_characters"):
-        characters = len(ctx.storage.list_characters(campaign_id=effective_id))
-    else:
-        characters = _count_meta(ctx, "characters")
+    notes_count = ctx.storage.count_notes(vault_id=effective_id)
+    folders = ctx.storage.list_folders(vault_id=vault_id)
+    characters = len(ctx.storage.list_characters(campaign_id=effective_id or None, vault_id=vault_id))
 
-    # Notes — use DB count when possible
-    if effective_id and hasattr(ctx.storage, "count_notes"):
-        notes_count = ctx.storage.count_notes(vault_id=effective_id)
-    else:
-        notes_count = len(ctx.storage.list_notes())
-
-    # Play sessions for a campaign
-    sessions = 0
+    sessions_total = 0
     if effective_id and hasattr(ctx.storage, "list_play_sessions"):
         try:
-            _, sessions = ctx.storage.list_play_sessions(effective_id, limit=0)
+            _, sessions_total = ctx.storage.list_play_sessions(effective_id, limit=0)
         except Exception:
-            sessions = 0
-    if not sessions:
-        sessions = _count_meta(ctx, "sessions")
-
-    folders = ctx.storage.list_folders()
+            sessions_total = 0
+    if not sessions_total:
+        try:
+            _, sessions_total = ctx.storage.list_session_logs(vault_id=vault_id)
+        except Exception:
+            sessions_total = _count_meta(ctx, "sessions")
     timeline_events = _count_timeline(ctx)
 
     return {
@@ -57,7 +49,7 @@ def stats(
         "characters": characters,
         "quests": 0,  # Quest model not yet implemented
         "timeline_events": timeline_events,
-        "sessions": sessions,
+        "sessions": sessions_total,
     }
 
 

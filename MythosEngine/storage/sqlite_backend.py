@@ -135,8 +135,10 @@ class CharacterRecord(Base):
     """ORM model for Character data — stored as JSON blob."""
 
     __tablename__ = "characters"
+    __table_args__ = (Index("ix_characters_vault_id", "vault_id"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    vault_id: Mapped[str] = mapped_column(String(36), nullable=False, default="", server_default="")
     campaign_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
 
@@ -145,8 +147,10 @@ class MapRecord(Base):
     """ORM model for Map data — stored as JSON blob."""
 
     __tablename__ = "maps"
+    __table_args__ = (Index("ix_maps_vault_id", "vault_id"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    vault_id: Mapped[str] = mapped_column(String(36), nullable=False, default="", server_default="")
     campaign_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON blob
 
@@ -312,6 +316,11 @@ class SQLiteBackend(StorageBackend):
 
         self.cost_tracker = CostTracker(self.engine)
 
+        # Per-user OpenAI API key storage and monthly quota enforcement.
+        from MythosEngine.ai.user_api_keys import UserApiKeyStore
+
+        self.user_api_keys = UserApiKeyStore(self.engine)
+
         # Vector index — in-memory semantic search; builds lazily on first write.
         self.vector_index = VectorIndexManager(VectorIndexConfig(location=VectorIndexLocation.IN_MEMORY, enabled=True))
 
@@ -331,6 +340,15 @@ class SQLiteBackend(StorageBackend):
             "ALTER TABLE notes ADD COLUMN title TEXT DEFAULT ''",
             "ALTER TABLE notes ADD COLUMN content TEXT DEFAULT ''",
             "ALTER TABLE notes ADD COLUMN tags TEXT DEFAULT ''",
+        ):
+            try:
+                conn.execute(statement)
+            except Exception:
+                pass  # column already exists
+
+        for statement in (
+            "ALTER TABLE characters ADD COLUMN vault_id TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE maps ADD COLUMN vault_id TEXT NOT NULL DEFAULT ''",
         ):
             try:
                 conn.execute(statement)
@@ -977,15 +995,16 @@ class SQLiteBackend(StorageBackend):
 
     def save_character(self, character: Character) -> None:
         """Save or update a Character record."""
-        # campaign_id takes precedence; vault_id is a deprecated alias
-        campaign_id = getattr(character, "campaign_id", None) or getattr(character, "vault_id", None) or ""
+        vault_id = getattr(character, "vault_id", "") or ""
+        campaign_id = getattr(character, "campaign_id", None) or vault_id or ""
         with self._session() as session:
             record = session.query(CharacterRecord).filter(CharacterRecord.id == character.id).first()
             if record:
+                record.vault_id = vault_id or record.vault_id
                 record.campaign_id = campaign_id or record.campaign_id
                 record.data = character.model_dump_json()
             else:
-                record = CharacterRecord(id=character.id, campaign_id=campaign_id, data=character.model_dump_json())
+                record = CharacterRecord(id=character.id, vault_id=vault_id, campaign_id=campaign_id, data=character.model_dump_json())
                 session.add(record)
             session.commit()
 
@@ -1018,17 +1037,14 @@ class SQLiteBackend(StorageBackend):
         with self._session() as session:
             q = session.query(CharacterRecord)
             if filter_id:
-                q = q.filter(CharacterRecord.campaign_id == filter_id)
+                q = q.filter(
+                    or_(CharacterRecord.campaign_id == filter_id, CharacterRecord.vault_id == filter_id)
+                )
             for rec in q.all():
                 try:
                     char = Character.model_validate_json(rec.data)
                     if getattr(char, "is_deleted", False):
                         continue
-                    # Fallback JSON-blob filter for rows written before the campaign_id column existed
-                    if filter_id and not rec.campaign_id:
-                        char_vid = getattr(char, "campaign_id", "") or getattr(char, "vault_id", "")
-                        if char_vid != filter_id:
-                            continue
                     if char_type == "npc" and not getattr(char, "is_npc", False):
                         continue
                     if char_type == "player" and getattr(char, "is_npc", False):
@@ -1054,14 +1070,16 @@ class SQLiteBackend(StorageBackend):
 
     def save_map(self, map_obj: Map) -> None:
         """Save or update a Map record."""
-        campaign_id = getattr(map_obj, "campaign_id", None) or getattr(map_obj, "vault_id", None) or ""
+        vault_id = getattr(map_obj, "vault_id", "") or ""
+        campaign_id = getattr(map_obj, "campaign_id", None) or vault_id or ""
         with self._session() as session:
             record = session.query(MapRecord).filter(MapRecord.id == map_obj.id).first()
             if record:
+                record.vault_id = vault_id or record.vault_id
                 record.campaign_id = campaign_id or record.campaign_id
                 record.data = map_obj.model_dump_json()
             else:
-                record = MapRecord(id=map_obj.id, campaign_id=campaign_id, data=map_obj.model_dump_json())
+                record = MapRecord(id=map_obj.id, vault_id=vault_id, campaign_id=campaign_id, data=map_obj.model_dump_json())
                 session.add(record)
             session.commit()
 
@@ -1094,17 +1112,14 @@ class SQLiteBackend(StorageBackend):
         with self._session() as session:
             q = session.query(MapRecord)
             if filter_id:
-                q = q.filter(MapRecord.campaign_id == filter_id)
+                q = q.filter(
+                    or_(MapRecord.campaign_id == filter_id, MapRecord.vault_id == filter_id)
+                )
             for record in q.all():
                 try:
                     map_obj = Map.model_validate_json(record.data)
                     if map_obj.is_deleted:
                         continue
-                    # Fallback JSON-blob filter for rows written before the campaign_id column existed
-                    if filter_id and not record.campaign_id:
-                        obj_vid = getattr(map_obj, "campaign_id", "") or getattr(map_obj, "vault_id", "")
-                        if obj_vid != filter_id:
-                            continue
                     if map_type and map_obj.map_type != map_type:
                         continue
                     results.append(map_obj)
@@ -1603,12 +1618,11 @@ class SQLiteBackend(StorageBackend):
         search_type: str = "fulltext",
     ) -> List[Note]:
         """
-        Search across all markdown notes.
+        Search across markdown notes.
 
         Case-insensitive substring match on title and content. Soft-deleted
         notes are excluded by cross-referencing the DB is_deleted column.
-        vault_id is accepted for interface compatibility but is ignored
-        (all notes in vault_path are searched).
+        When vault_id is provided, search is scoped to that vault's directory.
         """
         # Collect paths of soft-deleted notes from DB
         deleted_paths: set[str] = set()
@@ -1630,7 +1644,7 @@ class SQLiteBackend(StorageBackend):
                 rel_fwd = rel.replace("\\", "/")
                 if rel in deleted_paths or rel_fwd in deleted_paths:
                     continue
-                p = self.vault_path / rel
+                p = self._vault_root(vault_id) / rel if vault_id else self.vault_path / rel
                 if not p.is_file():
                     continue
                 try:
@@ -1653,11 +1667,12 @@ class SQLiteBackend(StorageBackend):
         # Fulltext: case-insensitive substring match on title and content.
         query_lower = query.lower()
         results: List[Note] = []
-        for p in self.vault_path.rglob("*.md"):
+        search_root = self._vault_root(vault_id) if vault_id else self.vault_path
+        for p in search_root.rglob("*.md"):
             if p.name.startswith("."):
                 continue
             try:
-                rel = str(p.relative_to(self.vault_path))
+                rel = str(p.relative_to(search_root))
                 rel_fwd = rel.replace("\\", "/")
                 if rel in deleted_paths or rel_fwd in deleted_paths:
                     continue
@@ -1667,7 +1682,7 @@ class SQLiteBackend(StorageBackend):
                         Note(
                             id=rel,
                             owner_id="system",
-                            vault_id=vault_id or str(self.vault_path),
+                            vault_id=vault_id or str(search_root),
                             title=p.stem,
                             content=content,
                         )

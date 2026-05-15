@@ -18,7 +18,7 @@ import NotFound from "./pages/NotFound";
 import Groups from "./pages/Groups";
 import OwnerGroups from "./pages/OwnerGroups";
 import OwnerInvites from "./pages/OwnerInvites";
-import { auth, setToken, getToken, vaults } from "./api";
+import { auth, setToken, getToken, setRefreshToken, vaults } from "./api";
 import { useSessionExpiry } from "./hooks/useSessionExpiry";
 import { VaultProvider } from "./context/VaultContext";
 import { RealtimeProvider } from "./context/RealtimeContext";
@@ -170,6 +170,7 @@ export default function App() {
   const handleLogout = () => {
     auth.logout().catch((err) => console.error('Logout failed:', err));
     setToken(null);
+    setRefreshToken(null);
     setUser(null);
     setSessionExp(null);
     setExpiryWarning(null);

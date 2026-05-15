@@ -25,7 +25,7 @@ from pydantic import BaseModel, EmailStr, field_validator
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
 from MythosEngine.utils.audit_logger import audit
-from server.auth_utils import create_jwt
+from server.auth_utils import create_jwt, create_refresh_token, decode_refresh_jwt
 from server.deps import get_ctx, get_current_user
 
 logger = logging.getLogger(__name__)
@@ -107,6 +107,7 @@ class LoginResponse(BaseModel):
     """Response body for successful login"""
 
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
     exp: datetime
     user: dict
@@ -148,10 +149,24 @@ class RegisterRequest(BaseModel):
         return validate_password_strength(v)
 
 
+class RefreshRequest(BaseModel):
+    """Request body for POST /auth/refresh"""
+
+    refresh_token: str
+
+
+class RefreshResponse(BaseModel):
+    """Response body for token refresh"""
+
+    access_token: str
+    token_type: str = "bearer"
+
+
 class RegisterResponse(BaseModel):
     """Response body for successful registration (auto-login)"""
 
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
     exp: datetime
     user: dict
@@ -174,6 +189,7 @@ class SetupResponse(BaseModel):
     """Response body for successful setup (auto-login as admin)"""
 
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
     exp: datetime
     user: dict
@@ -250,10 +266,12 @@ async def setup_admin(
 
         role = user.roles[0] if user.roles else "admin"
         token = create_jwt(user.id, user.email, role)
-        exp = datetime.utcnow() + timedelta(hours=8)
+        refresh = create_refresh_token(user.id)
+        exp = datetime.utcnow() + timedelta(hours=1)
 
         return SetupResponse(
             access_token=token,
+            refresh_token=refresh,
             token_type="bearer",
             exp=exp,
             user={
@@ -336,10 +354,12 @@ async def login(
 
         role = user.roles[0] if user.roles else "player"
         token = create_jwt(user.id, user.email, role)
-        exp = datetime.utcnow() + timedelta(hours=8)
+        refresh = create_refresh_token(user.id)
+        exp = datetime.utcnow() + timedelta(hours=1)
 
         return LoginResponse(
             access_token=token,
+            refresh_token=refresh,
             token_type="bearer",
             exp=exp,
             user={
@@ -415,6 +435,31 @@ async def change_password(
         )
 
 
+@router.post("/refresh", response_model=RefreshResponse)
+async def refresh_token(
+    req: RefreshRequest,
+    ctx: AppContext = Depends(get_ctx),
+):
+    """
+    Exchange a valid refresh token for a new access token.
+    Returns 401 if the refresh token is expired, invalid, or the user is inactive.
+    """
+    payload = decode_refresh_jwt(req.refresh_token)
+    user_id = payload.get("sub")
+    try:
+        user = ctx.users.get_user(user_id)
+    except Exception:
+        user = None
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive",
+        )
+    role = user.roles[0] if user.roles else "player"
+    token = create_jwt(user.id, user.email, role)
+    return RefreshResponse(access_token=token, token_type="bearer")
+
+
 @router.post("/register", response_model=RegisterResponse)
 async def register(
     req: RegisterRequest,
@@ -446,10 +491,12 @@ async def register(
 
         role = user.roles[0] if user.roles else "player"
         token = create_jwt(user.id, user.email, role)
-        exp = datetime.utcnow() + timedelta(hours=8)
+        refresh = create_refresh_token(user.id)
+        exp = datetime.utcnow() + timedelta(hours=1)
 
         return RegisterResponse(
             access_token=token,
+            refresh_token=refresh,
             token_type="bearer",
             exp=exp,
             user={

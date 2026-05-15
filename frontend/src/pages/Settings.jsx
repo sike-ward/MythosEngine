@@ -22,7 +22,6 @@ export default function Settings({ user }) {
   const [autosave, setAutosave] = useState(true);
 
   // AI Settings
-  const [apiKey, setApiKey] = useState('');
   const [preferredModel, setPreferredModel] = useState('gpt-4o');
   const [maxTokens, setMaxTokens] = useState('2048');
   const [streamingEnabled, setStreamingEnabled] = useState(true);
@@ -50,7 +49,6 @@ export default function Settings({ user }) {
       setPreferredModel(settingsData.completion_model);
     }
     if (settingsData.max_tokens) setMaxTokens(String(settingsData.max_tokens));
-    if (settingsData.api_key) setApiKey(settingsData.api_key);
     if (settingsData.campaign_api_key) setCampaignApiKey(settingsData.campaign_api_key);
     if (settingsData.streaming_enabled !== undefined) setStreamingEnabled(Boolean(settingsData.streaming_enabled));
     if (settingsData.ai_history_limit !== undefined) setAiHistoryLimit(Number(settingsData.ai_history_limit));
@@ -71,7 +69,6 @@ export default function Settings({ user }) {
         preferred_model: preferredModel,
         completion_model: preferredModel,
         max_tokens: parseInt(maxTokens, 10) || 2048,
-        api_key: apiKey || undefined,
         streaming_enabled: streamingEnabled,
         ai_history_limit: Number(aiHistoryLimit),
       });
@@ -132,7 +129,6 @@ export default function Settings({ user }) {
           {activeTab === 'account' && <AccountSettings user={user} />}
           {activeTab === 'ai' && (
             <AISettings
-              apiKey={apiKey} setApiKey={setApiKey}
               preferredModel={preferredModel} setPreferredModel={setPreferredModel}
               maxTokens={maxTokens} setMaxTokens={setMaxTokens}
               streamingEnabled={streamingEnabled} setStreamingEnabled={setStreamingEnabled}
