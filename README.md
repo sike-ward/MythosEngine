@@ -1,118 +1,125 @@
-# Ward DND AI
+# MythosEngine
 
-An AI-powered assistant for managing your Obsidian D&D vault. Browse notes, ask questions about your lore, generate summaries, suggest tags, and manage characters, maps, timelines, and more — all from a desktop GUI backed by your local Obsidian vault.
+A creative worldbuilding platform for novels, games, films, TTRPGs, and any fiction that needs a living world. Manage characters, notes, maps, timelines, factions, locations, and AI-assisted lore — all in one place.
 
 ---
 
-## Quick Start
+## Tech Stack
 
-### Requirements
+| Layer | Technology |
+|-------|-----------|
+| Frontend | Electron + React (Vite) |
+| Backend | FastAPI (Python 3.11+) |
+| Database | SQLite (local / dev), PostgreSQL (hosted) |
+| AI | Anthropic Claude via API |
+
+---
+
+## Setup
+
+### Prerequisites
+
 - Python 3.11+
-- An OpenAI API key
-- An Obsidian vault (or any folder of markdown files)
+- Node.js 18+
+- Git
 
-### Install
+### First-time setup
 
 ```bash
-git clone https://github.com/sike-ward/Ward_DND_Campaign.git
-cd Ward_DND_Campaign
+git clone https://github.com/sike-ward/MythosEngine.git
+cd MythosEngine
+
+# Python backend
 python -m venv .venv
-.venv\Scripts\Activate.ps1        # Windows PowerShell
+.venv\Scripts\Activate.ps1    # Windows PowerShell
 pip install -r requirements.txt
-```
 
-### Configure
-
-```bash
+# Copy and fill in environment variables
 cp .env.example .env
-# Edit .env and set your OPENAI_API_KEY and VAULT_PATH
+# Edit .env — set JWT_SECRET and ADMIN_PASSWORD at minimum
 ```
 
-### Run
-
-```bash
-python Ward_DND_AI\main.py
-# or double-click Launch_Lore_App.bat
-```
-
----
-
-## Environment Configuration
-
-The app uses `.env` files for secrets and environment-specific settings.
-
-| File | Purpose |
-|------|---------|
-| `.env` | Shared secrets — **never commit this** |
-| `.env.development` | Local dev overrides (optional) |
-| `.env.production` | Production overrides (optional) |
-| `.env.test` | Test environment overrides (optional) |
-| `.env.example` | Template — safe to commit |
-
-Set `APP_ENV=production` in your shell to switch environments.
-
-Key variables:
+### Environment variables
 
 | Variable | Description |
 |----------|-------------|
-| `OPENAI_API_KEY` | Your OpenAI API key |
-| `VAULT_PATH` | Absolute path to your Obsidian vault |
+| `JWT_SECRET` | Random hex string — `python -c "import secrets; print(secrets.token_hex(32))"` |
+| `ADMIN_EMAIL` | Email for the first admin account |
+| `ADMIN_PASSWORD` | Password for the first admin account |
+| `OPENAI_API_KEY` | Optional — enables AI features |
 | `APP_ENV` | `development` (default), `production`, or `test` |
 | `LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING` (default: `INFO`) |
-| `COMPLETION_MODEL` | OpenAI model for chat (default: `gpt-4o`) |
-| `EMBEDDING_MODEL` | OpenAI model for embeddings (default: `text-embedding-3-small`) |
 
-All other settings live in `Ward_DND_AI/config/settings.json` and can be changed from the Settings tab inside the app.
+All other settings live in `MythosEngine/config/settings.json`.
 
 ---
 
-## Project Structure
+## Running in development
+
+```bash
+# Terminal 1 — Python backend (from project root)
+python -m uvicorn server.app:app --host 127.0.0.1 --port 8741 --reload
+
+# Terminal 2 — Electron + React frontend
+cd frontend
+npm install
+npm run electron:dev
+```
+
+Or use the convenience launcher:
+
+```bat
+Launch_MythosEngine.bat
+```
+
+---
+
+## Building for testers
+
+See [HOW_TO_BUILD_FOR_TESTERS.md](HOW_TO_BUILD_FOR_TESTERS.md) for the full guide.
+
+Quick reference:
+
+```bat
+scripts\build-backend.bat
+cd frontend && npm run build:win
+```
+
+Output: `frontend\dist-electron\MythosEngine Setup x.x.x.exe`
+
+---
+
+## Role system
+
+| Role | Access |
+|------|--------|
+| `owner` | Full control — manage users, billing, instance settings |
+| `admin` | Manage users and groups within the instance |
+| `moderator` | Moderate content within a group |
+| `tester` | Access to pre-release features |
+| `user` | Standard access |
+
+---
+
+## Project structure
 
 ```
-Ward_DND_Campaign/
-├── Ward_DND_AI/
-│   ├── ai/           # AI engines (OpenAI, LoreAI RAG)
-│   ├── auth/         # PermissionChecker, session management
-│   ├── config/       # Config loader, settings.json, templates
+MythosEngine/
+├── server/           # FastAPI routes and business logic
+├── frontend/         # Electron + React (Vite) UI
+├── migrations/       # Alembic database migrations
+├── MythosEngine/     # Legacy Python layer (storage, managers, models)
+│   ├── auth/         # Auth manager, session manager, permission checker
+│   ├── config/       # Config loader
 │   ├── context/      # AppContext — central service locator
-│   ├── gui/          # PyQt6 GUI (controllers + views per tab)
-│   ├── managers/     # Business logic layer (one per model type)
+│   ├── managers/     # Business logic (one manager per entity type)
 │   ├── models/       # Pydantic data models
-│   ├── storage/      # StorageBackend interface + HybridStorage
-│   ├── tests/        # pytest test suite
-│   └── utils/        # Crash handler, audit logger, helpers
-├── docs/             # Architecture and operational docs
-├── logs/             # app.log, audit.log, crash logs
+│   ├── storage/      # StorageBackend interface, SQLiteBackend, HybridStorage
+│   └── tests/        # pytest test suite
 ├── .env.example      # Environment variable template
-├── mypy.ini          # Type checking config
-├── TECH_DEBT.md      # Known issues and deferred work
-└── requirements.txt  # Python dependencies
+├── requirements.txt  # Python dependencies
+└── TECH_DEBT.md      # Known issues and deferred work
 ```
-
----
-
-## Architecture Overview
-
-The app follows a strict MVC pattern with dependency injection:
-
-- **Models** (`models/`) — Pydantic v2, all inherit from `CoreModel` which provides `id`, `schema_version`, `owner_id`, `created_at`, `last_modified`
-- **Storage** (`storage/`) — `StorageBackend` abstract interface; `HybridStorage` stores notes as markdown and structured data as JSON in `.dnd_meta/`
-- **Managers** (`managers/`) — Business logic; one manager per model type; all take `StorageBackend` via constructor
-- **AppContext** (`context/app_context.py`) — Single service locator passed to every controller; holds config, storage, AI engine, all managers, and permission checker
-- **Controllers/Views** (`gui/`) — PyQt6 MVC; controllers receive `ctx: AppContext` and never touch storage or files directly
-
-### Multiuser Design
-
-Every model record carries `owner_id` and a `permissions` dict. `PermissionChecker` (`auth/permission_checker.py`) enforces read/write/admin access. `AppContext.current_user_id` identifies the acting user. When a database backend is added, swap `HybridStorage` for a new `StorageBackend` implementation in `AppContext.__init__` — nothing else needs to change.
-
----
-
-## Docs
-
-- [Configuration Reference](docs/config-reference.md)
-- [Permissions Model](docs/permissions-model.md)
-- [Backup & Restore](docs/backup-restore.md)
-- [Migration & Upgrade Guide](docs/migration-upgrade.md)
 
 ---
 
@@ -124,16 +131,11 @@ ruff check .
 ruff format .
 
 # Tests
-pytest Ward_DND_AI/tests/
+pytest MythosEngine/tests/
 
 # Type check
-mypy Ward_DND_AI/models/ Ward_DND_AI/managers/ Ward_DND_AI/storage/
-
-# Export all user data
-python Ward_DND_AI/scripts/export_data.py --output exports/
+mypy MythosEngine/models/ MythosEngine/managers/ MythosEngine/storage/
 ```
-
-Pre-commit hooks run ruff automatically on every commit.
 
 ---
 
