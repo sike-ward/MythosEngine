@@ -1,4 +1,4 @@
-# Tech Debt Log — Ward DND AI
+# Tech Debt Log — MythosEngine
 
 Items logged here are known issues that were not fixed immediately.
 Each entry has a severity, description, and the conditions under which it should be resolved.
