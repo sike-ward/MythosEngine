@@ -48,9 +48,11 @@ htmlcov/
 .vscode/
 .idea/
 
+# Obsidian personal campaign notes — tracked locally, not in source repo
+Obsidian/
+
 # Obsidian user config & plugin artifacts
 .obsidian/
-Obsidian/.obsidian/
 
 # Obsidian runtime/generated content
 Obsidian/loreai_index/

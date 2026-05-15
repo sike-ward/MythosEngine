@@ -1,2 +1,0 @@
-# Obsidiancharactersplayer Character Brandon
-

@@ -26,11 +26,9 @@ from MythosEngine.config.config import Config
 from MythosEngine.managers.character_manager import CharacterManager
 from MythosEngine.managers.folder_manager import FolderManager
 from MythosEngine.managers.group_manager import GroupManager
-from MythosEngine.managers.image_manager import ImageManager
 from MythosEngine.managers.invite_manager import InviteManager
 from MythosEngine.managers.map_manager import MapManager
 from MythosEngine.managers.note_manager import NoteManager
-from MythosEngine.managers.sound_manager import SoundManager
 from MythosEngine.managers.user_manager import UserManager
 from MythosEngine.managers.vault_manager import VaultManager
 from MythosEngine.models.user import User
@@ -74,8 +72,6 @@ class AppContext:
     folders : FolderManager
     characters : CharacterManager
     maps : MapManager
-    images : ImageManager
-    sounds : SoundManager
     permissions : PermissionChecker
     """
 
@@ -111,8 +107,6 @@ class AppContext:
         self.folders = FolderManager(self.storage)
         self.characters = CharacterManager(self.storage)
         self.maps = MapManager(self.storage)
-        self.images = ImageManager(self.storage)
-        self.sounds = SoundManager(self.storage)
         self.invites = InviteManager(self.storage)
 
         # Permission checker — stateless, shared across all managers
