@@ -8,8 +8,6 @@ import AccountSettings from '@/components/settings/AccountSettings';
 import AISettings from '@/components/settings/AISettings';
 import CampaignSettings from '@/components/settings/CampaignSettings';
 import HelpSettings from '@/components/settings/HelpSettings';
-import DebugSettings from '@/components/settings/DebugSettings';
-import AdminSettings from '@/components/settings/AdminSettings';
 import PrivacySettings from '@/components/settings/PrivacySettings';
 import { settings } from '@/api';
 import { getStoredTheme } from '@/theme';
@@ -32,7 +30,7 @@ export default function Settings({ user }) {
   const [vaultPath, setVaultPath] = useState('/vault');
   const [campaignApiKey, setCampaignApiKey] = useState('');
 
-  const isAdmin = user?.roles?.includes?.('admin') || user?.role === 'admin';
+  // Admin tools live in /admin — Settings is personal only
 
   // Load settings via React Query
   const { data: settingsData } = useQuery({
@@ -113,8 +111,6 @@ export default function Settings({ user }) {
             <NavItem id="campaign" label="Campaign" />
             <NavItem id="privacy" label="Privacy" />
             <NavItem id="help" label="Help & About" />
-            {isAdmin && <NavItem id="users" label="User Management" />}
-            {isAdmin && <NavItem id="debug" label="Debug" />}
           </nav>
         </div>
 
@@ -147,8 +143,6 @@ export default function Settings({ user }) {
           )}
           {activeTab === 'privacy' && <PrivacySettings />}
           {activeTab === 'help' && <HelpSettings />}
-          {activeTab === 'users' && isAdmin && <AdminSettings />}
-          {activeTab === 'debug' && isAdmin && <DebugSettings />}
         </Card>
       </div>
     </div>
