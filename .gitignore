@@ -73,6 +73,9 @@ launch_log.txt
 ai_usage_log.csv
 Ward_DND_AI/config/settings.json
 
+# Claude Code worktrees
+.claude/worktrees/
+
 # Project temp files
 directory_tree.txt
 py_files.txt
