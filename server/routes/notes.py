@@ -34,7 +34,7 @@ from pydantic import BaseModel, Field
 
 from MythosEngine.context.app_context import AppContext
 from MythosEngine.models.user import User
-from server.deps import get_ctx, get_current_user
+from server.deps import PLATFORM_ADMIN, get_ctx, get_current_user
 from server.realtime import hub
 from server.vault_access import resolve_vault
 
@@ -247,7 +247,7 @@ def _set_user_ctx(ctx: AppContext, user: User) -> None:
     """
     ctx.storage.set_user_context(
         user.id,
-        is_admin="admin" in (user.roles or []),
+        is_admin=user.system_role in PLATFORM_ADMIN,
         is_gm="gm" in (user.roles or []),
     )
 
@@ -656,7 +656,7 @@ async def delete_note(
         _set_user_ctx(ctx, user)
         note = _get_note_or_404(ctx, note_id)
 
-        is_admin = "admin" in (user.roles or [])
+        is_admin = user.system_role in PLATFORM_ADMIN
         if note.owner_id != user.id and not is_admin:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -686,7 +686,7 @@ async def move_note(
         _set_user_ctx(ctx, user)
         note = _get_note_or_404(ctx, req.note_id)
 
-        is_admin = "admin" in (user.roles or [])
+        is_admin = user.system_role in PLATFORM_ADMIN
         if note.owner_id != user.id and not is_admin:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -983,7 +983,7 @@ async def delete_folder(
                 detail="Folder not found",
             )
 
-        is_admin = "admin" in (user.roles or [])
+        is_admin = user.system_role in PLATFORM_ADMIN
         if folder.owner_id != user.id and not is_admin:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
