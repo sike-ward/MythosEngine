@@ -143,6 +143,13 @@ class MetaUpdateRequest(BaseModel):
     meta: Dict[str, str]
 
 
+class CreateRelationshipRequest(BaseModel):
+    """Request body for POST /notes/{id}/relationships"""
+
+    target_id: str = Field(..., max_length=500, description="Target note ID or label")
+    label: Optional[str] = Field(None, max_length=500)
+
+
 class CreateFolderRequest(BaseModel):
     """Request body for POST /notes/folders"""
 
@@ -794,6 +801,104 @@ async def update_meta(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update metadata: {str(e)}",
+        )
+
+
+# ============================================================================
+# Backlinks / relationship endpoints
+# ============================================================================
+
+
+@router.get("/{note_id}/backlinks")
+async def get_note_backlinks(
+    note_id: str,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Return all wiki-link relationships involving this note.
+
+    Each item has:
+      direction   — "from" (this note links to other) | "to" (other links to this note)
+      relation_type — always "wikilink" for now
+      label       — display title of the linked entity
+      other_entity_id   — the other note's id
+      other_entity_type — "note"
+    """
+    try:
+        _set_user_ctx(ctx, user)
+        _get_note_or_404(ctx, note_id)
+
+        results = []
+
+        # Forward links: this note → targets
+        forward_ids = []
+        if hasattr(ctx.storage, "get_relationships"):
+            try:
+                forward_ids = ctx.storage.get_relationships(note_id) or []
+            except Exception:
+                pass
+
+        for tid in forward_ids:
+            other = ctx.notes.get_note(tid) if tid else None
+            results.append({
+                "direction": "from",
+                "relation_type": "wikilink",
+                "label": other.title if other else tid,
+                "other_entity_id": tid,
+                "other_entity_type": "note",
+            })
+
+        # Back links: sources → this note
+        backward_ids = []
+        if hasattr(ctx.storage, "get_backlinks"):
+            try:
+                backward_ids = ctx.storage.get_backlinks(note_id) or []
+            except Exception:
+                pass
+
+        for sid in backward_ids:
+            other = ctx.notes.get_note(sid) if sid else None
+            results.append({
+                "direction": "to",
+                "relation_type": "wikilink",
+                "label": other.title if other else sid,
+                "other_entity_id": sid,
+                "other_entity_type": "note",
+            })
+
+        return results
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get backlinks: {str(e)}",
+        )
+
+
+@router.post("/{note_id}/relationships")
+async def create_note_relationship(
+    note_id: str,
+    req: CreateRelationshipRequest,
+    ctx: AppContext = Depends(get_ctx),
+    user: User = Depends(get_current_user),
+):
+    """Create a wiki-link relationship from this note to target_id.
+
+    Idempotent — safe to call multiple times for the same pair.
+    """
+    try:
+        _set_user_ctx(ctx, user)
+        _get_note_or_404(ctx, note_id)
+        if hasattr(ctx.storage, "upsert_relationship"):
+            ctx.storage.upsert_relationship(note_id, req.target_id)
+        return {"created": True, "source_id": note_id, "target_id": req.target_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create relationship: {str(e)}",
         )
 
 
