@@ -6,21 +6,20 @@ import {
   Scroll,
   User,
   Users,
-  Wand2,
   Globe,
   Map,
   Layers,
   Settings,
   LogOut,
-  Shield,
-  Mail,
-  BarChart2,
+  ShieldCheck,
 } from 'lucide-react';
 import { useRealtime } from '@/context/RealtimeContext';
 
+const ADMIN_ROLES = ['owner', 'admin', 'moderator'];
+
 const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeVaultId, onVaultChange }) => {
   const { onlineUsers, isConnected } = useRealtime();
-  const isAdmin = user?.roles?.includes?.('admin');
+  const canAccessAdmin = ADMIN_ROLES.includes(user?.system_role);
   const activeVaultName = vaults.find((v) => v.id === activeVaultId)?.name;
   const navItems = [
     { icon: Home, label: 'Dashboard', path: '/' },
@@ -28,16 +27,10 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
     { icon: Sparkles, label: 'AI', path: '/chat' },
     { icon: BookOpen, label: 'Browse', path: '/browse' },
     { icon: User, label: 'Characters', path: '/characters' },
-    { icon: Wand2, label: 'Create', path: '/create' },
     { icon: Scroll, label: 'Sessions', path: '/sessions' },
     { icon: Globe, label: 'Universe', path: '/universe' },
     { icon: Map, label: 'Maps', path: '/maps' },
     { icon: Users, label: 'Groups', path: '/groups' },
-  ];
-  const ownerItems = [
-    { icon: Shield, label: 'Groups', path: '/owner/groups' },
-    { icon: Mail, label: 'Invites', path: '/owner/invites' },
-    { icon: BarChart2, label: 'Analytics', path: '/admin/analytics' },
   ];
 
   return (
@@ -125,35 +118,6 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
             );
           })}
         </nav>
-        {isAdmin && (
-          <>
-            <p className="uppercase text-[11px] tracking-widest text-txt-muted font-bold mt-6 mb-3">
-              Owner
-            </p>
-            <nav className="flex flex-col gap-2">
-              {ownerItems.map((item) => {
-                const Icon = item.icon;
-                const isActive = currentPath === item.path;
-
-                return (
-                  <button
-                    key={item.path}
-                    onClick={() => onNavigate(item.path)}
-                    className={clsx(
-                      'flex items-center gap-3 rounded-xl px-4 py-3 transition-all text-left w-full',
-                      isActive
-                        ? 'bg-accent-soft text-accent font-semibold border-l-4 border-accent'
-                        : 'text-txt-dim hover:bg-hover'
-                    )}
-                  >
-                    <Icon size={20} />
-                    <span>{item.label}</span>
-                  </button>
-                );
-              })}
-            </nav>
-          </>
-        )}
       </div>
 
       {/* Bottom Section */}
@@ -178,6 +142,21 @@ const Sidebar = ({ currentPath, onNavigate, onLogout, user, vaults = [], activeV
           <Settings size={20} />
           <span>Settings</span>
         </button>
+
+        {canAccessAdmin && (
+          <button
+            onClick={() => onNavigate('/admin')}
+            className={clsx(
+              'flex items-center gap-3 rounded-xl px-4 py-3 transition-all text-left w-full',
+              currentPath.startsWith('/admin')
+                ? 'bg-accent-soft text-accent font-semibold border-l-4 border-accent'
+                : 'text-txt-dim hover:bg-hover'
+            )}
+          >
+            <ShieldCheck size={20} />
+            <span>Admin Panel</span>
+          </button>
+        )}
 
         <button
           onClick={onLogout}

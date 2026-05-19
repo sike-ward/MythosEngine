@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import SectionHeader from '@/components/SectionHeader';
 import Card from '@/components/Card';
@@ -8,8 +8,22 @@ import Button from '@/components/Button';
 import { SkeletonLine, SkeletonStatCard } from '@/components/Skeleton';
 import { dashboard } from '@/api';
 
+// Normalise the modified date field — backend may return either name
+function getNoteDate(note) {
+  return note.last_modified || note.modified_date;
+}
+
 export default function Dashboard({ user }) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  // Invalidate recent notes on mount and on window focus
+  useEffect(() => {
+    queryClient.invalidateQueries({ queryKey: ['dashboard-recent'] });
+    const onFocus = () => queryClient.invalidateQueries({ queryKey: ['dashboard-recent'] });
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [queryClient]);
 
   const { data: stats, isLoading: statsLoading, isError: statsError } = useQuery({
     queryKey: ['dashboard-stats'],
@@ -19,6 +33,7 @@ export default function Dashboard({ user }) {
   const { data: recent = [], isLoading: recentLoading, isError: recentError } = useQuery({
     queryKey: ['dashboard-recent'],
     queryFn: dashboard.recent,
+    staleTime: 30000,
   });
 
   useEffect(() => {
@@ -89,8 +104,8 @@ export default function Dashboard({ user }) {
                     <div className="flex justify-between items-center">
                       <span className="text-txt font-medium">{note.title}</span>
                       <span className="text-txt-muted text-xs">
-                        {note.modified_date
-                          ? new Date(note.modified_date).toLocaleDateString()
+                        {getNoteDate(note)
+                          ? new Date(getNoteDate(note)).toLocaleDateString()
                           : 'N/A'}
                       </span>
                     </div>

@@ -1,8 +1,37 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { Plus, FileText } from 'lucide-react';
 import Card from '@/components/Card';
-import Button from '@/components/Button';
 import NoteList from './NoteList';
 import { SkeletonLine } from '@/components/Skeleton';
+
+function InlineInput({ placeholder, onConfirm, onCancel, autoFocus = true }) {
+  const [value, setValue] = useState('');
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (autoFocus && ref.current) ref.current.focus();
+  }, [autoFocus]);
+
+  const confirm = () => {
+    if (value.trim()) onConfirm(value.trim());
+    else onCancel();
+  };
+
+  return (
+    <input
+      ref={ref}
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') confirm();
+        if (e.key === 'Escape') onCancel();
+      }}
+      onBlur={onCancel}
+      placeholder={placeholder}
+      className="w-full bg-elevated rounded-lg px-2 py-1 text-xs text-txt border border-accent/40 focus:border-accent focus:outline-none"
+    />
+  );
+}
 
 export default function FolderTree({
   allFolders,
@@ -27,11 +56,50 @@ export default function FolderTree({
   onHistorySelect,
   onClearHistory,
   editingMap = {},
+  onCreateNote,
+  onCreateFolder,
 }) {
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [showNewNoteInput, setShowNewNoteInput] = useState(false);
+  const [showNewFolderInput, setShowNewFolderInput] = useState(false);
+  const [inlineNoteFolderId, setInlineNoteFolderId] = useState(null);
+
+  const handleNewNote = (title) => {
+    onCreateNote(title, activeFolder);
+    setShowNewNoteInput(false);
+  };
+
+  const handleNewFolder = (name) => {
+    onCreateFolder(name);
+    setShowNewFolderInput(false);
+  };
+
+  const handleFolderNote = (title, folderId) => {
+    onCreateNote(title, folderId);
+    setInlineNoteFolderId(null);
+  };
 
   return (
-    <Card className="w-72 flex-shrink-0 flex flex-col overflow-hidden p-0">
+    <Card className="w-60 flex-shrink-0 flex flex-col overflow-hidden p-0">
+      {/* New Note button */}
+      <div className="p-2 border-b border-txt-muted/10">
+        {showNewNoteInput ? (
+          <InlineInput
+            placeholder="Note title..."
+            onConfirm={handleNewNote}
+            onCancel={() => setShowNewNoteInput(false)}
+          />
+        ) : (
+          <button
+            onClick={() => setShowNewNoteInput(true)}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition text-sm font-semibold"
+          >
+            <FileText size={14} />
+            New Note
+          </button>
+        )}
+      </div>
+
       {/* Search bar */}
       <div className="p-3 border-b border-txt-muted/10">
         <input
@@ -44,7 +112,7 @@ export default function FolderTree({
         />
       </div>
 
-      {/* Search history dropdown — shown when input is focused and empty */}
+      {/* Search history */}
       {historyOpen && !searchQuery && searchHistory.length > 0 && (
         <div className="border-b border-txt-muted/10 bg-card">
           {searchHistory.map((q, i) => (
@@ -95,7 +163,6 @@ export default function FolderTree({
             <SkeletonLine width="w-2/3" />
           </div>
         ) : searchResults ? (
-          /* Search results mode */
           <div className="space-y-0.5">
             <p className="text-txt-muted text-xs px-2 py-1 font-medium">
               {searchResults.length} result{searchResults.length !== 1 ? 's' : ''}
@@ -108,27 +175,53 @@ export default function FolderTree({
             />
           </div>
         ) : (
-          /* Folder tree mode */
           <div className="space-y-0.5">
             {allNotes.length === 0 && allFolders.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-8 text-center space-y-2">
                 <div className="text-3xl">📁</div>
-                <p className="text-txt-muted text-sm">Select a folder to get started</p>
-                <p className="text-txt-muted text-xs">or create a new note with + Note</p>
+                <p className="text-txt-muted text-sm">No notes yet</p>
+                <p className="text-txt-muted text-xs">Click New Note to get started</p>
               </div>
             ) : (
               <>
-                {/* All Notes button */}
+                {/* All Notes */}
                 <button
                   onClick={() => onFolderSelect(null)}
                   className={`w-full text-left px-3 py-2 rounded-lg text-sm transition ${
-                    !activeFolder ? 'bg-accent/10 text-accent font-semibold' : 'text-txt hover:bg-hover'
+                    !activeFolder
+                      ? 'bg-accent/10 text-accent font-semibold'
+                      : 'text-txt hover:bg-hover'
                   }`}
                 >
                   📋 All Notes ({allNotes.length})
                 </button>
 
-                {/* Folders */}
+                {/* Folders header with + */}
+                <div className="flex items-center px-3 pt-2 pb-1">
+                  <span className="text-[10px] uppercase tracking-widest text-txt-muted font-bold flex-1">
+                    Folders
+                  </span>
+                  <button
+                    onClick={() => setShowNewFolderInput(true)}
+                    className="text-txt-muted hover:text-txt transition p-0.5 rounded"
+                    title="New folder"
+                  >
+                    <Plus size={12} />
+                  </button>
+                </div>
+
+                {/* Inline folder input */}
+                {showNewFolderInput && (
+                  <div className="px-1 pb-1">
+                    <InlineInput
+                      placeholder="Folder name..."
+                      onConfirm={handleNewFolder}
+                      onCancel={() => setShowNewFolderInput(false)}
+                    />
+                  </div>
+                )}
+
+                {/* Folder rows */}
                 {allFolders.map((folder) => {
                   const folderNotes = notesByFolder[folder.id] || [];
                   const isExpanded = expandedFolders.has(folder.id);
@@ -138,23 +231,53 @@ export default function FolderTree({
                     <div key={folder.id}>
                       <div className="flex items-center group">
                         <button
-                          onClick={() => { onToggleFolder(folder.id); onFolderSelect(folder.id); }}
-                          className={`flex-1 text-left px-3 py-2 rounded-lg text-sm transition flex items-center gap-2 ${
-                            isActive ? 'bg-accent/10 text-accent font-semibold' : 'text-txt hover:bg-hover'
+                          onClick={() => {
+                            onToggleFolder(folder.id);
+                            onFolderSelect(folder.id);
+                          }}
+                          className={`flex-1 min-w-0 text-left px-3 py-2 rounded-lg text-sm transition flex items-center gap-2 ${
+                            isActive
+                              ? 'bg-accent/10 text-accent font-semibold'
+                              : 'text-txt hover:bg-hover'
                           }`}
                         >
-                          <span className="text-xs">{isExpanded ? '▼' : '▶'}</span>
-                          <span>📁 {folder.name}</span>
-                          <span className="text-txt-muted text-xs ml-auto">{folderNotes.length}</span>
+                          <span className="text-xs flex-shrink-0">{isExpanded ? '▼' : '▶'}</span>
+                          <span className="truncate">📁 {folder.name}</span>
+                          <span className="text-txt-muted text-xs ml-auto flex-shrink-0">
+                            {folderNotes.length}
+                          </span>
+                        </button>
+                        {/* Hover: add note + delete folder */}
+                        <button
+                          onClick={() =>
+                            setInlineNoteFolderId(
+                              inlineNoteFolderId === folder.id ? null : folder.id,
+                            )
+                          }
+                          className="hidden group-hover:flex items-center justify-center text-txt-muted hover:text-accent transition text-xs w-6 h-6 rounded"
+                          title="New note in folder"
+                        >
+                          <Plus size={11} />
                         </button>
                         <button
                           onClick={() => onDeleteFolder(folder.id)}
-                          className="hidden group-hover:block text-danger text-xs px-1 hover:bg-danger/10 rounded"
+                          className="hidden group-hover:flex items-center justify-center text-danger text-xs w-5 h-6 rounded hover:bg-danger/10"
                           title="Delete folder"
                         >
                           ✕
                         </button>
                       </div>
+
+                      {/* Inline note input for this folder */}
+                      {inlineNoteFolderId === folder.id && (
+                        <div className="ml-5 pr-1 py-0.5">
+                          <InlineInput
+                            placeholder="Note title..."
+                            onConfirm={(title) => handleFolderNote(title, folder.id)}
+                            onCancel={() => setInlineNoteFolderId(null)}
+                          />
+                        </div>
+                      )}
 
                       {isExpanded && folderNotes.length > 0 && (
                         <div className="ml-5 space-y-0.5">
@@ -168,7 +291,7 @@ export default function FolderTree({
                       )}
 
                       {isExpanded && folderNotes.length === 0 && (
-                        <p className="ml-5 text-txt-muted text-xs px-3 py-1">No notes here yet — create one!</p>
+                        <p className="ml-5 text-txt-muted text-xs px-3 py-1">Empty folder</p>
                       )}
                     </div>
                   );
@@ -178,10 +301,15 @@ export default function FolderTree({
                 {unfiledNotes.length > 0 && (
                   <div>
                     <button
-                      onClick={() => { onToggleFolder('__unfiled__'); onFolderSelect(null); }}
+                      onClick={() => {
+                        onToggleFolder('__unfiled__');
+                        onFolderSelect(null);
+                      }}
                       className="w-full text-left px-3 py-2 rounded-lg text-sm text-txt-muted hover:bg-hover transition flex items-center gap-2"
                     >
-                      <span className="text-xs">{expandedFolders.has('__unfiled__') ? '▼' : '▶'}</span>
+                      <span className="text-xs">
+                        {expandedFolders.has('__unfiled__') ? '▼' : '▶'}
+                      </span>
                       <span>📄 Unfiled</span>
                       <span className="text-xs ml-auto">{unfiledNotes.length}</span>
                     </button>

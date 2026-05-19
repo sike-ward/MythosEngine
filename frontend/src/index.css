@@ -356,3 +356,123 @@ html.theme-transition *:not(svg):not(path) {
 
 /* ── Hover shadow states ────────────────────────────────────────────── */
 .hover\:shadow-glow:hover           { box-shadow: var(--shadow-glow) !important; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TIPTAP EDITOR
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.tiptap-editor .tiptap {
+  outline: none;
+  min-height: 100%;
+  color: rgb(var(--color-txt));
+  font-size: 0.9375rem;
+  line-height: 1.7;
+}
+
+/* Placeholder */
+.tiptap-editor .tiptap p.is-editor-empty:first-child::before {
+  color: rgb(var(--color-placeholder));
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* Headings */
+.tiptap-editor .tiptap h1 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: rgb(var(--color-txt));
+  margin: 1.25rem 0 0.5rem;
+  line-height: 1.25;
+}
+.tiptap-editor .tiptap h2 {
+  font-size: 1.375rem;
+  font-weight: 700;
+  color: rgb(var(--color-txt));
+  margin: 1rem 0 0.4rem;
+}
+.tiptap-editor .tiptap h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: rgb(var(--color-txt));
+  margin: 0.75rem 0 0.3rem;
+}
+
+/* Paragraphs */
+.tiptap-editor .tiptap p {
+  margin: 0.25rem 0;
+  color: rgb(var(--color-txt));
+}
+
+/* Lists */
+.tiptap-editor .tiptap ul,
+.tiptap-editor .tiptap ol {
+  padding-left: 1.5rem;
+  margin: 0.4rem 0;
+}
+.tiptap-editor .tiptap ul { list-style: disc; }
+.tiptap-editor .tiptap ol { list-style: decimal; }
+.tiptap-editor .tiptap li { margin: 0.15rem 0; color: rgb(var(--color-txt)); }
+
+/* Blockquote */
+.tiptap-editor .tiptap blockquote {
+  border-left: 3px solid rgba(var(--color-accent), 0.5);
+  margin: 0.5rem 0;
+  padding: 0.25rem 0.75rem;
+  color: rgb(var(--color-txt-secondary));
+  font-style: italic;
+}
+
+/* Inline code */
+.tiptap-editor .tiptap code {
+  background: rgba(var(--color-elevated), 1);
+  border: 1px solid rgba(var(--color-border), 1);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  font-family: "Fira Code", "Cascadia Code", monospace;
+  font-size: 0.875em;
+  color: rgb(var(--color-accent));
+}
+
+/* Code block */
+.tiptap-editor .tiptap pre {
+  background: rgba(var(--color-elevated), 1);
+  border: 1px solid rgba(var(--color-border-subtle), 1);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin: 0.5rem 0;
+  overflow-x: auto;
+}
+.tiptap-editor .tiptap pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: rgb(var(--color-txt));
+  font-size: 0.875rem;
+}
+
+/* Horizontal rule */
+.tiptap-editor .tiptap hr {
+  border: none;
+  border-top: 1px solid rgba(var(--color-border-subtle), 1);
+  margin: 1rem 0;
+}
+
+/* Strong / em */
+.tiptap-editor .tiptap strong { font-weight: 700; }
+.tiptap-editor .tiptap em { font-style: italic; }
+
+/* Links */
+.tiptap-editor .tiptap a {
+  color: rgb(var(--color-accent));
+  text-decoration: underline;
+}
+.tiptap-editor .tiptap a:hover {
+  color: rgb(var(--color-accent-hover));
+}
+
+/* Read-only view — slightly different feel */
+.tiptap-editor .tiptap[contenteditable="false"] {
+  cursor: default;
+}

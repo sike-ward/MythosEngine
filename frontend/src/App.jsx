@@ -19,6 +19,7 @@ import Groups from "./pages/Groups";
 import OwnerGroups from "./pages/OwnerGroups";
 import OwnerInvites from "./pages/OwnerInvites";
 import AdminAnalytics from "./pages/AdminAnalytics";
+import AdminPanel from "./pages/AdminPanel";
 import { auth, setToken, getToken, setRefreshToken, vaults } from "./api";
 import { useSessionExpiry } from "./hooks/useSessionExpiry";
 import { VaultProvider } from "./context/VaultContext";
@@ -178,7 +179,8 @@ export default function App() {
     navigate("/login");
   };
 
-  const isAdmin = user?.roles?.includes?.("admin");
+  const ADMIN_ROLES = ['owner', 'admin', 'moderator'];
+  const isAdmin = ADMIN_ROLES.includes(user?.system_role);
   const { data: vaultList = [] } = useQuery({
     queryKey: ["vaults", user?.id],
     queryFn: vaults.list,
@@ -253,6 +255,7 @@ export default function App() {
                 <Route path="/groups" element={<Groups user={user} />} />
                 {isAdmin && <Route path="/owner/groups" element={<OwnerGroups />} />}
                 {isAdmin && <Route path="/owner/invites" element={<OwnerInvites />} />}
+                {isAdmin && <Route path="/admin" element={<AdminPanel user={user} />} />}
                 {isAdmin && <Route path="/admin/analytics" element={<AdminAnalytics />} />}
                 {isAdmin && <Route path="/admin/groups" element={<Navigate to="/owner/groups" replace />} />}
                 {isAdmin && <Route path="/admin/invites" element={<Navigate to="/owner/invites" replace />} />}

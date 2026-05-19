@@ -2,16 +2,14 @@ import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { ChevronRight, ChevronLeft } from 'lucide-react';
 import SectionHeader from '@/components/SectionHeader';
 import Card from '@/components/Card';
-import Button from '@/components/Button';
-import Input from '@/components/Input';
 import FolderTree from '@/components/browse/FolderTree';
 import NoteEditor from '@/components/browse/NoteEditor';
 import TagPanel from '@/components/browse/TagPanel';
 import MetaPanel from '@/components/browse/MetaPanel';
 import PermissionsPanel from '@/components/browse/PermissionsPanel';
-import { SkeletonLine } from '@/components/Skeleton';
 import { notes, folders, ai, groups, users, isRateLimitError, RATE_LIMIT_MSG } from '@/api';
 import { useVault } from '@/context/VaultContext';
 import { useRealtime } from '@/context/RealtimeContext';
@@ -36,6 +34,9 @@ export default function Browse({ user }) {
   const [editTitle, setEditTitle] = useState('');
   const [editContent, setEditContent] = useState('');
 
+  // ── Right panel ──────────────────────────────────────────────────────────
+  const [rightPanelOpen, setRightPanelOpen] = useState(true);
+
   // ── Search ───────────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState(null);
@@ -47,12 +48,6 @@ export default function Browse({ user }) {
 
   // ── New tag input ────────────────────────────────────────────────────────
   const [newTag, setNewTag] = useState('');
-
-  // ── Create note/folder dialogs ───────────────────────────────────────────
-  const [showCreateNote, setShowCreateNote] = useState(false);
-  const [newNoteTitle, setNewNoteTitle] = useState('');
-  const [showCreateFolder, setShowCreateFolder] = useState(false);
-  const [newFolderName, setNewFolderName] = useState('');
 
   // ── Move note ────────────────────────────────────────────────────────────
   const [showMoveDialog, setShowMoveDialog] = useState(false);
@@ -103,7 +98,7 @@ export default function Browse({ user }) {
 
   const loading = foldersLoading || notesLoading;
 
-  // Sync edit state when note loads
+  // Sync edit state when note loads (view mode only)
   useEffect(() => {
     if (selectedNote && !isEditing) {
       setEditTitle(selectedNote.title);
@@ -147,20 +142,13 @@ export default function Browse({ user }) {
 
   // ── Search (debounced) ───────────────────────────────────────────────────
   useEffect(() => {
-    if (!activeVaultId) {
-      setSearchResults(null);
-      return;
-    }
-    if (!searchQuery.trim()) {
-      setSearchResults(null);
-      return;
-    }
+    if (!activeVaultId) { setSearchResults(null); return; }
+    if (!searchQuery.trim()) { setSearchResults(null); return; }
     clearTimeout(searchTimeout.current);
     searchTimeout.current = setTimeout(async () => {
       try {
         const data = await notes.search(searchQuery, { vault_id: activeVaultId });
         setSearchResults(data.items || []);
-        // Push to history (deduplicate, keep last 10)
         setSearchHistory((prev) => {
           const deduped = prev.filter((q) => q !== searchQuery);
           return [searchQuery, ...deduped].slice(0, 10);
@@ -178,14 +166,6 @@ export default function Browse({ user }) {
 
   const allTags = [...new Set(allNotes.flatMap((n) => n.tags || []))].sort();
 
-  const displayNotes = (() => {
-    if (searchResults) return searchResults;
-    let list = allNotes;
-    if (activeFolder) list = list.filter((n) => n.folder_id === activeFolder);
-    if (tagFilter) list = list.filter((n) => (n.tags || []).some((t) => t.toLowerCase() === tagFilter.toLowerCase()));
-    return list;
-  })();
-
   const notesByFolder = {};
   allNotes.forEach((n) => {
     const fid = n.folder_id || '__unfiled__';
@@ -194,12 +174,16 @@ export default function Browse({ user }) {
   });
   const unfiledNotes = notesByFolder['__unfiled__'] || [];
 
-  const wordCount = (text) => text ? text.trim().split(/\s+/).filter(Boolean).length : 0;
-  const editingPresence = editing.find((item) => item.note_id === selectedNoteId && item.user_id !== user?.id);
+  const wordCount = (text) =>
+    text ? text.trim().split(/\s+/).filter(Boolean).length : 0;
+
+  const editingPresence = editing.find(
+    (item) => item.note_id === selectedNoteId && item.user_id !== user?.id,
+  );
   const editingMap = Object.fromEntries(
     editing
       .filter((item) => item.user_id !== user?.id)
-      .map((item) => [item.note_id, item.email || item.username || item.user_id])
+      .map((item) => [item.note_id, item.email || item.username || item.user_id]),
   );
   const permissionSubjects = new Set([user?.id, ...(user?.groups || [])].filter(Boolean));
   const permissionRank = { read: 1, write: 2 };
@@ -207,7 +191,7 @@ export default function Browse({ user }) {
     ? [...permissionSubjects]
         .map((subject) => selectedNote.permissions?.[subject])
         .filter(Boolean)
-        .sort((left, right) => (permissionRank[right] || 0) - (permissionRank[left] || 0))[0] || null
+        .sort((l, r) => (permissionRank[r] || 0) - (permissionRank[l] || 0))[0] || null
     : null;
   const canEdit =
     !!selectedNote &&
@@ -252,12 +236,15 @@ export default function Browse({ user }) {
   });
 
   const createNoteMutation = useMutation({
-    mutationFn: ({ title, folderId }) => notes.create(title, '', folderId, [], {}, activeVaultId),
+    mutationFn: ({ title, folderId }) =>
+      notes.create(title, '', folderId, [], {}, activeVaultId),
     onSuccess: (created) => {
-      setShowCreateNote(false);
-      setNewNoteTitle('');
       queryClient.invalidateQueries({ queryKey: ['notes', activeVaultId] });
       setSelectedNoteId(created.id);
+      setEditTitle(created.title);
+      setEditContent('');
+      setIsEditing(true);
+      startEditing(created.id, 0);
       toast.success('Note created');
     },
     onError: (err) => toast.error('Failed to create note: ' + err.message),
@@ -266,8 +253,6 @@ export default function Browse({ user }) {
   const createFolderMutation = useMutation({
     mutationFn: (name) => folders.create(name, null, activeVaultId),
     onSuccess: () => {
-      setShowCreateFolder(false);
-      setNewFolderName('');
       queryClient.invalidateQueries({ queryKey: ['folders', activeVaultId] });
       toast.success('Folder created');
     },
@@ -307,14 +292,14 @@ export default function Browse({ user }) {
     deleteNoteMutation.mutate(selectedNote.id);
   };
 
-  const handleCreateNote = () => {
-    if (!newNoteTitle.trim()) return;
-    createNoteMutation.mutate({ title: newNoteTitle, folderId: activeFolder });
+  const handleCreateNote = (title, folderId) => {
+    if (!title?.trim()) return;
+    createNoteMutation.mutate({ title: title.trim(), folderId: folderId ?? activeFolder });
   };
 
-  const handleCreateFolder = () => {
-    if (!newFolderName.trim()) return;
-    createFolderMutation.mutate(newFolderName);
+  const handleCreateFolder = (name) => {
+    if (!name?.trim()) return;
+    createFolderMutation.mutate(name.trim());
   };
 
   const handleDeleteFolder = (folderId) => {
@@ -348,7 +333,6 @@ export default function Browse({ user }) {
     }
   };
 
-  // Fully wired: calls AI, then auto-adds each suggested tag (item 116)
   const handleSuggestTags = async () => {
     if (!selectedNote) return;
     try {
@@ -356,24 +340,21 @@ export default function Browse({ user }) {
         selectedNote.content || selectedNote.title,
         selectedNote.tags || [],
       );
-      if (!result.tags?.length) {
-        toast.success('No new tags suggested');
-        return;
-      }
-      // Auto-add all suggested tags
+      if (!result.tags?.length) { toast.success('No new tags suggested'); return; }
       for (const tag of result.tags) {
         await notes.addTag(selectedNote.id, tag);
       }
       queryClient.invalidateQueries({ queryKey: ['note', selectedNoteId] });
       queryClient.invalidateQueries({ queryKey: ['notes', activeVaultId] });
-      toast.success(`Added ${result.tags.length} tag${result.tags.length > 1 ? 's' : ''}: ${result.tags.join(', ')}`);
+      toast.success(
+        `Added ${result.tags.length} tag${result.tags.length > 1 ? 's' : ''}: ${result.tags.join(', ')}`,
+      );
     } catch (err) {
       if (isRateLimitError(err)) { toast.error(RATE_LIMIT_MSG); return; }
       toast.error('Tag suggestion failed: ' + err.message);
     }
   };
 
-  // Fully wired: calls AI, shows result inline below editor (item 116)
   const handleSummarize = async () => {
     if (!selectedNote?.content) { toast.error('Note has no content to summarize'); return; }
     try {
@@ -385,22 +366,18 @@ export default function Browse({ user }) {
     }
   };
 
-  // Item 109: propose-links handler
   const handleProposeLinks = async () => {
     if (!selectedNote) return;
     const content = isEditing ? editContent : (selectedNote.content || '');
     if (!content.trim()) { toast.error('Note has no content to analyze'); return; }
     try {
-      const noteTitles = allNotes
-        .filter((n) => n.id !== selectedNote.id)
-        .map((n) => n.title);
+      const noteTitles = allNotes.filter((n) => n.id !== selectedNote.id).map((n) => n.title);
       const result = await ai.proposeLinks(content, noteTitles);
-      if (!result.links?.length) {
-        toast.success('No link suggestions found');
-        return;
-      }
+      if (!result.links?.length) { toast.success('No link suggestions found'); return; }
       setProposedLinks(result.links);
-      toast.success(`${result.links.length} link suggestion${result.links.length > 1 ? 's' : ''} — click a chip to insert`);
+      toast.success(
+        `${result.links.length} link suggestion${result.links.length > 1 ? 's' : ''} — click a chip to insert`,
+      );
     } catch (err) {
       if (isRateLimitError(err)) { toast.error(RATE_LIMIT_MSG); return; }
       toast.error('Link suggestion failed: ' + err.message);
@@ -492,14 +469,6 @@ export default function Browse({ user }) {
     });
   };
 
-  const handleHistorySelect = (query) => {
-    setSearchQuery(query);
-  };
-
-  const handleClearHistory = () => {
-    setSearchHistory([]);
-  };
-
   // ════════════════════════════════════════════════════════════════════════
   // RENDER
   // ════════════════════════════════════════════════════════════════════════
@@ -507,51 +476,14 @@ export default function Browse({ user }) {
   return (
     <div className="p-6 flex flex-col h-full gap-4 min-w-0">
       {/* ── Header ─────────────────────────────────────────────────────── */}
-      <div className="flex justify-between items-start">
-        <SectionHeader title="📖 Browse" subtitle="Explore and manage your vault." />
-        <div className="flex gap-2 items-center">
-          <Button variant="primary" size="sm" onClick={() => setShowCreateNote(true)} disabled={!activeVaultId}>+ Note</Button>
-          <Button variant="secondary" size="sm" onClick={() => setShowCreateFolder(true)} disabled={!activeVaultId}>+ Folder</Button>
-        </div>
-      </div>
+      <SectionHeader title="📖 Browse" subtitle="Explore and manage your vault." />
 
       {!activeVaultId && (
         <Card className="p-4">
           <p className="text-sm text-txt">
-            No project selected. Select a project in the sidebar, or create one in Settings → Campaign before browsing notes.
+            No project selected. Select a project in the sidebar, or create one in Settings →
+            Campaign before browsing notes.
           </p>
-        </Card>
-      )}
-
-      {/* ── Create dialogs ─────────────────────────────────────────────── */}
-      {showCreateNote && (
-        <Card className="p-4 flex gap-2 items-end">
-          <div className="flex-1">
-            <Input
-              label="New Note Title"
-              placeholder="My new note..."
-              value={newNoteTitle}
-              onChange={(e) => setNewNoteTitle(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleCreateNote()}
-            />
-          </div>
-          <Button variant="primary" size="sm" onClick={handleCreateNote}>Create</Button>
-          <Button variant="ghost" size="sm" onClick={() => setShowCreateNote(false)}>Cancel</Button>
-        </Card>
-      )}
-      {showCreateFolder && (
-        <Card className="p-4 flex gap-2 items-end">
-          <div className="flex-1">
-            <Input
-              label="New Folder Name"
-              placeholder="NPCs, Locations, etc..."
-              value={newFolderName}
-              onChange={(e) => setNewFolderName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleCreateFolder()}
-            />
-          </div>
-          <Button variant="primary" size="sm" onClick={handleCreateFolder}>Create</Button>
-          <Button variant="ghost" size="sm" onClick={() => setShowCreateFolder(false)}>Cancel</Button>
         </Card>
       )}
 
@@ -559,151 +491,189 @@ export default function Browse({ user }) {
       {activeVaultId && (
         <div className="flex gap-4 flex-1 overflow-hidden min-h-0 min-w-0">
 
-        {/* LEFT PANEL */}
-        <FolderTree
-          allFolders={allFolders}
-          allNotes={allNotes}
-          notesByFolder={notesByFolder}
-          unfiledNotes={unfiledNotes}
-          activeFolder={activeFolder}
-          onFolderSelect={setActiveFolder}
-          expandedFolders={expandedFolders}
-          onToggleFolder={toggleFolder}
-          selectedNoteId={selectedNoteId}
-          onNoteSelect={handleSelectNote}
-          onDeleteFolder={handleDeleteFolder}
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-          searchResults={searchResults}
-          allTags={allTags}
-          tagFilter={tagFilter}
-          onTagFilter={setTagFilter}
-          loading={loading}
-          searchHistory={searchHistory}
-          onHistorySelect={handleHistorySelect}
-          onClearHistory={handleClearHistory}
-          editingMap={editingMap}
-        />
+          {/* LEFT PANEL — 240px fixed */}
+          <FolderTree
+            allFolders={allFolders}
+            allNotes={allNotes}
+            notesByFolder={notesByFolder}
+            unfiledNotes={unfiledNotes}
+            activeFolder={activeFolder}
+            onFolderSelect={setActiveFolder}
+            expandedFolders={expandedFolders}
+            onToggleFolder={toggleFolder}
+            selectedNoteId={selectedNoteId}
+            onNoteSelect={handleSelectNote}
+            onDeleteFolder={handleDeleteFolder}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            searchResults={searchResults}
+            allTags={allTags}
+            tagFilter={tagFilter}
+            onTagFilter={setTagFilter}
+            loading={loading}
+            searchHistory={searchHistory}
+            onHistorySelect={setSearchQuery}
+            onClearHistory={() => setSearchHistory([])}
+            editingMap={editingMap}
+            onCreateNote={handleCreateNote}
+            onCreateFolder={handleCreateFolder}
+          />
 
-        {/* CENTER PANEL */}
-        <NoteEditor
-          selectedNote={selectedNote}
-          allFolders={allFolders}
-          isEditing={isEditing}
-          editTitle={editTitle}
-          editContent={editContent}
-          onTitleChange={setEditTitle}
-          onContentChange={setEditContent}
-          onEdit={() => {
-            if (!canEdit) return;
-            setIsEditing(true);
-            startEditing(selectedNote?.id, 0);
-          }}
-          onSave={handleSave}
-          onCancel={() => {
-            setIsEditing(false);
-            stopEditing(selectedNote?.id);
-            if (selectedNote) {
-              setEditTitle(selectedNote.title);
-              setEditContent(selectedNote.content || '');
-            }
-          }}
-          onDelete={handleDelete}
-          onSummarize={handleSummarize}
-          onSuggestTags={handleSuggestTags}
-          onSuggestLinks={handleProposeLinks}
-          proposedLinks={proposedLinks}
-          onClearProposedLinks={() => setProposedLinks([])}
-          summaryResult={summaryResult}
-          onClearSummary={() => setSummaryResult('')}
-          showMoveDialog={showMoveDialog}
-          onToggleMove={setShowMoveDialog}
-          onMove={handleMoveNote}
-          wordCount={wordCount}
-          activeFolder={activeFolder}
-          noteLoading={noteLoading && !!selectedNoteId}
-          canEdit={canEdit}
-          editingPresence={editingPresence}
-          onCursorChange={(cursor) => selectedNoteId && updateCursor(selectedNoteId, cursor)}
-        />
+          {/* CENTER PANEL — flex-1 */}
+          <NoteEditor
+            selectedNote={selectedNote}
+            allFolders={allFolders}
+            isEditing={isEditing}
+            editTitle={editTitle}
+            editContent={editContent}
+            onTitleChange={setEditTitle}
+            onContentChange={setEditContent}
+            onEdit={() => {
+              if (!canEdit) return;
+              setIsEditing(true);
+              startEditing(selectedNote?.id, 0);
+            }}
+            onSave={handleSave}
+            onCancel={() => {
+              setIsEditing(false);
+              stopEditing(selectedNote?.id);
+              if (selectedNote) {
+                setEditTitle(selectedNote.title);
+                setEditContent(selectedNote.content || '');
+              }
+            }}
+            onDelete={handleDelete}
+            onSummarize={handleSummarize}
+            onSuggestTags={handleSuggestTags}
+            onSuggestLinks={handleProposeLinks}
+            proposedLinks={proposedLinks}
+            onClearProposedLinks={() => setProposedLinks([])}
+            summaryResult={summaryResult}
+            onClearSummary={() => setSummaryResult('')}
+            showMoveDialog={showMoveDialog}
+            onToggleMove={setShowMoveDialog}
+            onMove={handleMoveNote}
+            wordCount={wordCount}
+            activeFolder={activeFolder}
+            noteLoading={noteLoading && !!selectedNoteId}
+            canEdit={canEdit}
+            editingPresence={editingPresence}
+            onCursorChange={(cursor) => selectedNoteId && updateCursor(selectedNoteId, cursor)}
+          />
 
-        {/* RIGHT PANEL */}
-        {selectedNote && (
-          <Card className="w-72 flex-shrink-0 flex flex-col overflow-hidden p-0">
-            <div className="px-4 py-3 border-b border-txt-muted/10">
-              <h3 className="text-sm font-bold text-txt">Properties</h3>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-3 space-y-4">
-              <TagPanel
-                selectedNote={selectedNote}
-                newTag={newTag}
-                onNewTagChange={setNewTag}
-                onAddTag={handleAddTag}
-                onRemoveTag={handleRemoveTag}
-                onSuggestTags={handleSuggestTags}
-              />
-
-              <PermissionsPanel
-                selectedNote={selectedNote}
-                allFolders={allFolders}
-                onSetGroup={handleSetGroup}
-                groups={groupList}
-                users={userList}
-                canEdit={canEdit}
-                onSetPermission={handleSetPermission}
-                onToggleGmOnly={handleToggleGmOnly}
-              />
-
-              <MetaPanel
-                selectedNote={selectedNote}
-                showMetaEditor={showMetaEditor}
-                onToggleMetaEditor={() => setShowMetaEditor((v) => !v)}
-                metaKey={metaKey}
-                metaValue={metaValue}
-                onMetaKeyChange={setMetaKey}
-                onMetaValueChange={setMetaValue}
-                onAddMeta={handleAddMeta}
-                onRemoveMeta={handleRemoveMeta}
-              />
-
-              {/* AI Summary */}
-              {selectedNote.ai_summary && (
-                <div>
-                  <p className="text-xs font-bold text-txt-muted uppercase tracking-wider mb-1">AI Summary</p>
-                  <p className="text-xs text-txt-secondary">{selectedNote.ai_summary}</p>
-                </div>
-              )}
-
-              {/* File info */}
-              <div className="border-t border-txt-muted/10 pt-3">
-                <p className="text-xs font-bold text-txt-muted uppercase tracking-wider mb-2">Info</p>
-                <div className="space-y-1 text-xs text-txt-muted">
-                  <div className="flex justify-between">
-                    <span>Created</span>
-                    <span className="text-txt">{new Date(selectedNote.created_at).toLocaleDateString()}</span>
+          {/* RIGHT PANEL — 280px, collapsible */}
+          {selectedNote && (
+            <>
+              <div
+                className={`flex-shrink-0 overflow-hidden transition-all duration-200 ${
+                  rightPanelOpen ? 'w-[280px]' : 'w-0'
+                }`}
+              >
+                <Card className="w-[280px] h-full flex flex-col overflow-hidden p-0">
+                  <div className="px-4 py-3 border-b border-txt-muted/10 flex items-center justify-between flex-shrink-0">
+                    <h3 className="text-sm font-bold text-txt">Properties</h3>
+                    <button
+                      onClick={() => setRightPanelOpen(false)}
+                      className="text-txt-muted hover:text-txt transition p-0.5 rounded"
+                      title="Collapse panel"
+                    >
+                      <ChevronRight size={15} />
+                    </button>
                   </div>
-                  <div className="flex justify-between">
-                    <span>Modified</span>
-                    <span className="text-txt">{new Date(selectedNote.last_modified).toLocaleString()}</span>
+
+                  <div className="flex-1 overflow-y-auto p-3 space-y-4">
+                    <TagPanel
+                      selectedNote={selectedNote}
+                      newTag={newTag}
+                      onNewTagChange={setNewTag}
+                      onAddTag={handleAddTag}
+                      onRemoveTag={handleRemoveTag}
+                      onSuggestTags={handleSuggestTags}
+                    />
+
+                    <PermissionsPanel
+                      selectedNote={selectedNote}
+                      allFolders={allFolders}
+                      onSetGroup={handleSetGroup}
+                      groups={groupList}
+                      users={userList}
+                      canEdit={canEdit}
+                      onSetPermission={handleSetPermission}
+                      onToggleGmOnly={handleToggleGmOnly}
+                    />
+
+                    <MetaPanel
+                      selectedNote={selectedNote}
+                      showMetaEditor={showMetaEditor}
+                      onToggleMetaEditor={() => setShowMetaEditor((v) => !v)}
+                      metaKey={metaKey}
+                      metaValue={metaValue}
+                      onMetaKeyChange={setMetaKey}
+                      onMetaValueChange={setMetaValue}
+                      onAddMeta={handleAddMeta}
+                      onRemoveMeta={handleRemoveMeta}
+                    />
+
+                    {selectedNote.ai_summary && (
+                      <div>
+                        <p className="text-xs font-bold text-txt-muted uppercase tracking-wider mb-1">
+                          AI Summary
+                        </p>
+                        <p className="text-xs text-txt-secondary">{selectedNote.ai_summary}</p>
+                      </div>
+                    )}
+
+                    <div className="border-t border-txt-muted/10 pt-3">
+                      <p className="text-xs font-bold text-txt-muted uppercase tracking-wider mb-2">
+                        Info
+                      </p>
+                      <div className="space-y-1 text-xs text-txt-muted">
+                        <div className="flex justify-between">
+                          <span>Created</span>
+                          <span className="text-txt">
+                            {new Date(selectedNote.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Modified</span>
+                          <span className="text-txt">
+                            {new Date(selectedNote.last_modified).toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Words</span>
+                          <span className="text-txt">{wordCount(selectedNote.content)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Owner</span>
+                          <span className="text-txt truncate ml-2">
+                            {selectedNote.owner_id || 'N/A'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>ID</span>
+                          <span className="text-txt truncate ml-2 font-mono text-[10px]">
+                            {selectedNote.id}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span>Words</span>
-                    <span className="text-txt">{wordCount(selectedNote.content)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Owner</span>
-                    <span className="text-txt truncate ml-2">{selectedNote.owner_id || 'N/A'}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>ID</span>
-                    <span className="text-txt truncate ml-2 font-mono text-[10px]">{selectedNote.id}</span>
-                  </div>
-                </div>
+                </Card>
               </div>
-            </div>
-          </Card>
-        )}
+
+              {/* Expand button when panel is collapsed */}
+              {!rightPanelOpen && (
+                <button
+                  onClick={() => setRightPanelOpen(true)}
+                  className="flex-shrink-0 self-start mt-1 p-1.5 rounded-lg bg-elevated hover:bg-hover text-txt-muted hover:text-txt transition border border-txt-muted/10"
+                  title="Show properties"
+                >
+                  <ChevronLeft size={15} />
+                </button>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
