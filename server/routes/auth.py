@@ -257,6 +257,8 @@ async def setup_admin(
             password=req.password,
             roles=["admin", "gm"],
         )
+        user.system_role = "owner"
+        ctx.users.update_user(user)
 
         ctx.storage.set_user_context(
             user.id,
@@ -279,6 +281,7 @@ async def setup_admin(
                 "username": user.username,
                 "email": user.email,
                 "roles": user.roles,
+                "system_role": user.system_role,
                 "groups": user.groups,
                 "is_active": user.is_active,
             },
@@ -345,7 +348,7 @@ async def login(
         # Set user context on storage for permission checks
         ctx.storage.set_user_context(
             user.id,
-            is_admin="admin" in (user.roles or []),
+            is_admin=user.system_role in {"owner", "admin"},
             is_gm="gm" in (user.roles or []),
         )
 
@@ -368,6 +371,7 @@ async def login(
                 "username": user.username,
                 "email": user.email,
                 "roles": user.roles,
+                "system_role": user.system_role,
                 "groups": user.groups,
                 "is_active": user.is_active,
             },
@@ -408,6 +412,7 @@ async def get_me(
             "username": user.username,
             "email": user.email,
             "roles": user.roles,
+            "system_role": user.system_role,
             "groups": user.groups,
             "is_active": user.is_active,
         }
@@ -507,6 +512,7 @@ async def register(
                 "username": user.username,
                 "email": user.email,
                 "roles": user.roles or ["player"],
+                "system_role": user.system_role,
                 "groups": user.groups,
                 "is_active": user.is_active,
             },
