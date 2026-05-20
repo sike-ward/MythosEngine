@@ -47,10 +47,11 @@ def _to_response(vault: Vault) -> VaultResponse:
 
 @router.get("/", response_model=List[VaultResponse])
 async def list_vaults(
+    all: bool = Query(False, description="Platform admins only: return all vaults (explore/analytics mode)"),
     ctx: AppContext = Depends(get_ctx),
     user: User = Depends(get_current_user),
 ):
-    return [_to_response(vault) for vault in list_accessible_vaults(ctx, user)]
+    return [_to_response(vault) for vault in list_accessible_vaults(ctx, user, all_vaults=all)]
 
 
 @router.get("/{vault_id}", response_model=VaultResponse)

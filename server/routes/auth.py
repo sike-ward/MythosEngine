@@ -263,7 +263,6 @@ async def setup_admin(
         ctx.storage.set_user_context(
             user.id,
             is_admin=True,
-            is_gm=True,
         )
 
         role = user.roles[0] if user.roles else "admin"
@@ -349,7 +348,6 @@ async def login(
         ctx.storage.set_user_context(
             user.id,
             is_admin=user.system_role in {"owner", "admin"},
-            is_gm="gm" in (user.roles or []),
         )
 
         # Update last_login
